@@ -1,0 +1,23 @@
+# Gradle / Android Studio
+.gradle/
+build/
+app/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+.idea/
+.DS_Store
+
+# упрощённая сборка
+build-nogradle/
+*.apk
+*.aab
+*.dex
+
+# ключи подписи — никогда не публиковать
+keystore/
+*.jks
+*.keystore
+*.p12

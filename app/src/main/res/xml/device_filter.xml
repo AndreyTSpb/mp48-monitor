@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Prolific PL2303 (диагностический кабель блока) -->
+    <usb-device vendor-id="1659" product-id="8963" />
+    <usb-device vendor-id="1659" />
+</resources>

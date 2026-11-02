@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Данные для окна «О программе». Меняются здесь, код трогать не нужно. -->
+<resources>
+    <string name="about_description">Монитор газового блока AEB MP48 для автомагнитолы: текущие параметры, графики, предупреждения, статистика, переключение газ/бензин.</string>
+    <string name="about_developer">AndrewT</string>
+    <string name="about_contacts">tynyanyi@mail.ru</string>
+    <string name="about_source">https://github.com/AndreyTSpb/mp48-monitor</string>
+    <string name="about_year">2026</string>
+    <string name="about_license">Лицензия MIT</string>
+    <string name="about_disclaimer">Неофициальная программа, не связана с AEB, Pride и другими производителями ГБО. Протокол получен наблюдением обмена штатной программы с блоком. Используйте на свой риск.</string>
+</resources>

@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Ключ подписи берётся из keystore/keystore.properties (в git не попадает).
+// Без него сборка подписывается отладочным ключом Android Studio — такой APK
+// не встанет поверх установленного приложения, подписанного вашим ключом.
+def ksFile = rootProject.file('keystore/keystore.properties')
+def ks = new Properties()
+if (ksFile.exists()) ksFile.withInputStream { ks.load(it) }
+
+android {
+    namespace 'ru.gbo.aebmonitor'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ru.gbo.aebmonitor'
+        minSdk 21
+        targetSdk 30          // сознательно: Android 11 магнитолы, без ограничений новых версий
+        versionCode 3
+        versionName '1.2'
+    }
+
+    signingConfigs {
+        own {
+            if (ksFile.exists()) {
+                storeFile rootProject.file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksFile.exists()) signingConfig signingConfigs.own
+        }
+        debug {
+            if (ksFile.exists()) signingConfig signingConfigs.own
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'ExpiredTargetSdkVersion', 'OldTargetApi'
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
