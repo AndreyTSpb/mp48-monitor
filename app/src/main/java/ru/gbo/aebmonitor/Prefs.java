@@ -24,6 +24,21 @@ public final class Prefs {
     public int trendWindowSec() { return sp.getInt("trendWindow", 60); }
     public boolean locationAsked() { return sp.getBoolean("locationAsked", false); }
 
+    // --- ночной режим: 0 авто (по времени), 1 день, 2 ночь ---
+    public static final int NIGHT_AUTO = 0, NIGHT_DAY = 1, NIGHT_NIGHT = 2;
+    public int nightMode() { return sp.getInt("nightMode", NIGHT_AUTO); }
+    public void setNightMode(int m) { sp.edit().putInt("nightMode", m).apply(); }
+    /** Яркость подсветки ночью, 0.02…1.0; 0 — не трогать системную. */
+    public float nightBrightness() { return sp.getFloat("nightBright", 0.12f); }
+    public void setNightBrightness(float b) { sp.edit().putFloat("nightBright", b).apply(); }
+    /** Сила затемнения интерфейса ночью, 0…0.7. */
+    public float nightDim() { return sp.getFloat("nightDim", 0.45f); }
+    public void setNightDim(float d) { sp.edit().putFloat("nightDim", d).apply(); }
+
+    // --- экран «Карта K»: режим раскраски 0 K, 1 множитель, 2 время ---
+    public int mapCellMode() { return sp.getInt("mapCellMode", 0); }
+    public void setMapCellMode(int m) { sp.edit().putInt("mapCellMode", m).apply(); }
+
     public void setAlerts(float lowPress, int waitMinutes, boolean sound) {
         sp.edit().putFloat("lowPress", lowPress).putInt("waitMinutes", waitMinutes)
                 .putBoolean("sound", sound).apply();

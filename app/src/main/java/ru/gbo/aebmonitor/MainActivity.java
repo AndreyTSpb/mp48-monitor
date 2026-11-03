@@ -58,6 +58,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     private boolean rawMode;
     private int lastFuel = -1;
     private boolean fuelBusy;
+    private android.view.View dimLayer;
+    private final android.os.Handler nightTick = new android.os.Handler();
 
     // ---------- жизненный цикл ----------
 
@@ -86,6 +88,17 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         pages.addView(trendView);
         pages.addView(mapView);
         pages.addView(statsView);
+        mapView.setMode(prefs.mapCellMode());
+        mapView.setModeListener(new MapView.ModeListener() {
+            @Override public void onModeChanged(int m) { prefs.setMapCellMode(m); }
+        });
+        dimLayer = new android.view.View(this);
+        dimLayer.setBackgroundColor(0xFF000000);
+        dimLayer.setAlpha(0f);
+        dimLayer.setClickable(false);
+        dimLayer.setFocusable(false);
+        pages.addView(dimLayer, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         root.addView(pages, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout bar = new LinearLayout(this);
@@ -114,6 +127,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         showPage(PAGE_DASH);
         styleButton(btnOverlay, prefs.overlay());
         updateFuelButton();
+        applyNight();
 
         IntentFilter f = new IntentFilter();
         f.addAction(ACTION_PERMISSION);
@@ -143,11 +157,14 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         super.onResume();
         if (svc != null) svc.setUiVisible(true);
         connectIfPossible();
+        applyNight();
+        nightTick.postDelayed(nightTicker, 60000);
     }
 
     @Override
     protected void onPause() {
         if (svc != null) svc.setUiVisible(false);
+        nightTick.removeCallbacks(nightTicker);
         super.onPause();
     }
 
@@ -185,6 +202,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             trendView.setTrend(svc.trend);
             statsView.setStats(svc.stats);
             mapView.setTrend(svc.trend);
+            mapView.setCells(svc.cells);
             updateGpsInfo();
             dash.setDemo(svc.isDemo());
             if (pendingDevice != null) {
@@ -355,7 +373,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     }
 
     private static final int M_RAW = 1, M_DEMO = 2, M_RECONNECT = 3, M_AUTOLOG = 4, M_REFILL = 5,
-            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10, M_MAP = 11;
+            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10, M_MAP = 11, M_NIGHT = 12, M_RECORDS = 13;
 
     private void showMenu() {
         final boolean demo = svc != null && svc.isDemo();
@@ -367,6 +385,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         addItem(ids, names, M_SETTINGS, "Настройки предупреждений…");
         addItem(ids, names, M_REFILL, "Заправка (калибровка расхода)…");
         addItem(ids, names, M_RESET_TRIP, "Сбросить статистику поездки");
+        addItem(ids, names, M_RECORDS, "Записи…");
+        addItem(ids, names, M_NIGHT, "Ночной режим…");
         if (!hasLocation()) addItem(ids, names, M_GPS, "Разрешить GPS (пробег)");
         addItem(ids, names, M_MAP, "Перечитать карту K из блока");
         addItem(ids, names, M_RECONNECT, "Переподключить");
@@ -423,7 +443,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             case M_SETTINGS: settingsDialog(); break;
             case M_REFILL: refillDialog(); break;
             case M_RESET_TRIP:
-                if (svc != null) { svc.stats.resetTrip(); statsView.invalidate(); }
+                if (svc != null) { svc.stats.resetTrip(); svc.cells.reset(); statsView.invalidate(); mapView.invalidate(); }
                 break;
             case M_GPS: requestLocation(); break;
             case M_RECONNECT:
@@ -431,6 +451,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                 permissionAsked = false;
                 connectIfPossible();
                 break;
+            case M_NIGHT: nightDialog(); break;
+            case M_RECORDS: recordsDialog(); break;
             case M_ABOUT: aboutDialog(); break;
             case M_MAP:
                 if (svc == null) break;
@@ -641,6 +663,156 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         g.setStroke(dp(1), active ? Theme.GAS : Theme.GRID);
         b.setBackground(g);
         b.setTextColor(active ? 0xFFFFFFFF : 0xFFC9D1DC);
+    }
+
+    // ---------- ночной режим ----------
+
+    private final Runnable nightTicker = new Runnable() {
+        @Override public void run() {
+            if (prefs.nightMode() == Prefs.NIGHT_AUTO) applyNight();
+            nightTick.postDelayed(this, 60000);
+        }
+    };
+
+    private boolean nightActive() {
+        int m = prefs.nightMode();
+        if (m == Prefs.NIGHT_NIGHT) return true;
+        if (m == Prefs.NIGHT_DAY) return false;
+        int hr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        return hr >= 19 || hr < 7;
+    }
+
+    private void applyNight() {
+        boolean night = nightActive();
+        if (dimLayer != null) dimLayer.setAlpha(night ? prefs.nightDim() : 0f);
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = night ? Math.max(0.02f, Math.min(1f, prefs.nightBrightness()))
+                : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+        getWindow().setAttributes(lp);
+    }
+
+    private void nightDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pd = dp(20);
+        box.setPadding(pd, dp(8), pd, 0);
+
+        android.widget.RadioGroup rg = new android.widget.RadioGroup(this);
+        String[] names = {"Авто (по времени, 19–7 ч)", "Всегда день", "Всегда ночь"};
+        for (int i = 0; i < 3; i++) {
+            android.widget.RadioButton rb = new android.widget.RadioButton(this);
+            rb.setText(names[i]);
+            rb.setId(100 + i);
+            rg.addView(rb);
+        }
+        rg.check(100 + prefs.nightMode());
+        box.addView(rg);
+
+        final TextView brLabel = new TextView(this);
+        box.addView(brLabel);
+        final android.widget.SeekBar br = new android.widget.SeekBar(this);
+        br.setMax(100);
+        br.setProgress(Math.round(prefs.nightBrightness() * 100));
+        box.addView(br);
+        final TextView dimLabel = new TextView(this);
+        box.addView(dimLabel);
+        final android.widget.SeekBar dim = new android.widget.SeekBar(this);
+        dim.setMax(70);
+        dim.setProgress(Math.round(prefs.nightDim() * 100));
+        box.addView(dim);
+
+        final Runnable upd = new Runnable() {
+            @Override public void run() {
+                brLabel.setText("Яркость подсветки ночью: " + Math.max(2, br.getProgress()) + " %");
+                dimLabel.setText("Затемнение интерфейса ночью: " + dim.getProgress() + " %");
+            }
+        };
+        upd.run();
+        android.widget.SeekBar.OnSeekBarChangeListener l = new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int pr, boolean u) { upd.run(); }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) { }
+        };
+        br.setOnSeekBarChangeListener(l);
+        dim.setOnSeekBarChangeListener(l);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Ночной режим")
+                .setView(box)
+                .setPositiveButton("Сохранить", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        int sel = rg.getCheckedRadioButtonId() - 100;
+                        prefs.setNightMode(sel < 0 ? Prefs.NIGHT_AUTO : sel);
+                        prefs.setNightBrightness(Math.max(2, br.getProgress()) / 100f);
+                        prefs.setNightDim(dim.getProgress() / 100f);
+                        applyNight();
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    // ---------- записи ----------
+
+    private void recordsDialog() {
+        final java.util.List<Recordings.Entry> list = Recordings.list(this);
+        if (list.isEmpty()) {
+            toast("Записей нет. Включите «Запись» в поездке.");
+            return;
+        }
+        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("dd.MM HH:mm", Locale.US);
+        String[] items = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            Recordings.Entry e = list.get(i);
+            items[i] = e.name + "\n" + Recordings.humanSize(e.size) + " · " + fmt.format(new java.util.Date(e.dateMs));
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Записи (" + list.size() + ")")
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) { recordActions(list.get(which)); }
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
+    private void recordActions(final Recordings.Entry e) {
+        new AlertDialog.Builder(this)
+                .setTitle(e.name)
+                .setItems(new String[]{"Поделиться / отправить", "Удалить"}, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        if (which == 0) shareRecord(e);
+                        else confirmDeleteRecord(e);
+                    }
+                })
+                .setNegativeButton("Назад", null)
+                .show();
+    }
+
+    private void shareRecord(Recordings.Entry e) {
+        try {
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_STREAM, e.uri);
+            i.putExtra(Intent.EXTRA_SUBJECT, e.name);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(i, "Отправить запись"));
+        } catch (Exception ex) {
+            toast("Не удалось отправить: " + ex.getMessage());
+        }
+    }
+
+    private void confirmDeleteRecord(final Recordings.Entry e) {
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить запись?")
+                .setMessage(e.name)
+                .setPositiveButton("Удалить", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        toast(Recordings.delete(MainActivity.this, e) ? "Удалено" : "Не удалось удалить");
+                        recordsDialog();
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
     }
 
     private int dp(int v) {

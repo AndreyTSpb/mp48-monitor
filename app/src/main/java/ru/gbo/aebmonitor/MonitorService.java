@@ -62,6 +62,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private boolean uiVisible;
 
     public final Trend trend = new Trend();
+    public final CellStats cells = new CellStats();
     public Stats stats;
     private final Alerts alerts = new Alerts();
     private final CsvLogger logger = new CsvLogger();
@@ -314,6 +315,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
         last = f;
         trend.add(f);
         logger.write(f);
+        cells.onFrame(f, kmap);
         if (real) stats.onFrame(f);
         Alerts.Alert fresh = alerts.onFrame(f);
         if (fresh != null) beep(fresh.type);
