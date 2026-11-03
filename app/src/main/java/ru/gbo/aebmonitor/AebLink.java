@@ -182,7 +182,17 @@ public final class AebLink extends Thread {
                 fuel(false, "Не удалось прочитать режим блока — переключение отменено");
                 return;
             }
-            if (Protocol.fuelVarIsGas(cur) == toGas) {
+            // «Уже выбран» определяем по реальному режиму из кадра параметров (как видит пользователь
+            // на табло), а не по переменной 3: они расходятся в переходные моменты. Ожидание газа
+            // считаем газовой стороной.
+            boolean onGas;
+            Protocol.Reply rt = xfer(port, Protocol.CMD_REALTIME);
+            if (rt != null && rt.kind == Protocol.Reply.OK && rt.data.length >= Protocol.REALTIME_LEN) {
+                onGas = Protocol.decode(rt.data, System.currentTimeMillis()).fuel != Protocol.FUEL_PETROL;
+            } else {
+                onGas = Protocol.fuelVarIsGas(cur);
+            }
+            if (onGas == toGas) {
                 fuel(true, toGas ? "Газ уже выбран" : "Бензин уже выбран");
                 return;
             }

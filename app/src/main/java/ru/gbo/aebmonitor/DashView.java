@@ -153,6 +153,34 @@ public final class DashView extends View {
         text.setTextAlign(Paint.Align.CENTER);
         c.drawText(fuel, r.centerX(), centerBase(r.centerY()), text);
 
+        // Чип состояния газового клапана (сразу за бейджем топлива)
+        float afterBadge = x0 + bw;
+        if (f != null && alert == null) {
+            String vt;
+            int vc;
+            switch (f.valve()) {
+                case Protocol.VALVE_OPEN: vt = "клапан открыт"; vc = GAS; break;
+                case Protocol.VALVE_FILL: vt = "клапан: наполнение"; vc = WAIT; break;
+                default: vt = "клапан закрыт"; vc = DIM; break;
+            }
+            text.setTypeface(normal);
+            text.setTextSize(h * 0.30f);
+            float dot = h * 0.16f, gap = h * 0.3f;
+            float cw = dot * 2 + gap + text.measureText(vt) + h * 0.5f;
+            float cx0 = afterBadge + 2 * u;
+            if (cx0 + cw < x1 - 2 * u) {                     // рисуем только если помещается
+                r.set(cx0, y0 + h * 0.18f, cx0 + cw, y1 - h * 0.18f);
+                fill.setColor(TILE);
+                c.drawRoundRect(r, h * 0.18f, h * 0.18f, fill);
+                fill.setColor(vc);
+                c.drawCircle(cx0 + h * 0.35f, r.centerY(), dot, fill);
+                text.setColor(LABEL);
+                text.setTextAlign(Paint.Align.LEFT);
+                c.drawText(vt, cx0 + h * 0.35f + dot + gap, centerBase(r.centerY()), text);
+                afterBadge = cx0 + cw;
+            }
+        }
+
         // Предупреждение — красная плашка вместо строки состояния
         if (alert != null) {
             r.set(x0 + bw + 2 * u, y0, x1, y1);
@@ -183,8 +211,8 @@ public final class DashView extends View {
         }
         String l1 = demo ? "ДЕМО-РЕЖИМ" : linkText;
         text.setColor(demo ? WAIT : lc);
-        // обрезка длинного текста, чтобы не налезал на бейдж
-        float maxW = x1 - (x0 + bw) - 2 * u;
+        // обрезка длинного текста, чтобы не налезал на бейдж и чип клапана
+        float maxW = x1 - afterBadge - 2 * u;
         float l1w = text.measureText(l1);
         if (l1w > maxW && l1w > 0) text.setTextSize(text.getTextSize() * Math.max(0.6f, maxW / l1w));
         l1 = ellipsize(l1, maxW);

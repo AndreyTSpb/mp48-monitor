@@ -144,6 +144,7 @@ public final class Protocol {
     // ---------- Кадр текущих параметров (ответ на 48 01) ----------
 
     public static final int FUEL_PETROL = 0, FUEL_GAS_WAIT = 1, FUEL_GAS = 2;
+    public static final int VALVE_CLOSED = 0, VALVE_FILL = 1, VALVE_OPEN = 2;
 
     /** Биты байта состояния (11). 0x10 — на газу, 0x08 — газ выбран. */
     public static final int ST_SHORT_PETROL = 0x01;  // короткий бензиновый импульс (< ~1,5 мс) в переходе, газ держится прежним
@@ -171,6 +172,17 @@ public final class Protocol {
         /** Переходный кадр (отсечка или короткий бензиновый импульс): Tб не отражает нагрузку. */
         public boolean isTransient() {
             return (status & (ST_SHORT_PETROL | ST_CUTOFF)) != 0;
+        }
+
+        /**
+         * Состояние газового клапана по режиму блока:
+         * бензин → закрыт; газ выбран, но ещё на бензине → открыт на наполнение (предоткрытие);
+         * работа на газу → открыт.
+         */
+        public int valve() {
+            if (fuel == FUEL_GAS) return VALVE_OPEN;
+            if (fuel == FUEL_GAS_WAIT) return VALVE_FILL;
+            return VALVE_CLOSED;
         }
     }
 
