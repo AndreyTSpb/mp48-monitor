@@ -38,6 +38,24 @@ public final class Protocol {
         return req(0x35, id & 0xFF, (id >> 8) & 0xFF, v[0] & 0xFF, v[1] & 0xFF, v[2] & 0xFF, v[3] & 0xFF);
     }
 
+    // ---------- Карта K (только чтение) ----------
+    // Ось Tб: блок 0x37 (12 × u16, тики 2,56 мкс); ось оборотов: блок 0x3D (12 × u16, об/мин);
+    // строки карты: 2A 54 00 i (i = 0…12, по 12 байт, K × 100). Строка 12 — скрытая (= последней).
+
+    public static final int MAP_AXIS_TB = 0x37, MAP_AXIS_RPM = 0x3D, MAP_ROWS = 13, MAP_COLS = 12;
+
+    public static byte[] readMapRow(int row) {
+        return req(0x2A, 0x54, 0x00, row & 0xFF);
+    }
+
+    /** Разобрать ось из 12 значений u16. */
+    public static int[] axis(byte[] d) {
+        if (d == null || d.length < MAP_COLS * 2) return null;
+        int[] a = new int[MAP_COLS];
+        for (int i = 0; i < MAP_COLS; i++) a[i] = u16(d, i * 2);
+        return a;
+    }
+
     public static boolean fuelVarIsGas(byte[] v) {
         return (v[1] & FUEL_BIT_GAS) != 0;
     }
@@ -127,6 +145,11 @@ public final class Protocol {
 
     public static final int FUEL_PETROL = 0, FUEL_GAS_WAIT = 1, FUEL_GAS = 2;
 
+    /** Биты байта состояния (11). 0x10 — на газу, 0x08 — газ выбран. */
+    public static final int ST_SHORT_PETROL = 0x01;  // короткий бензиновый импульс (< ~1,5 мс) в переходе, газ держится прежним
+    public static final int ST_CUTOFF = 0x04;        // отсечка топлива (сброс газа), Tб = Tг = 0
+    public static final int ST_AFTER_START = 0x20;   // сброшен первые ~40–90 с после пуска (смысл не выяснен)
+
     public static final class Frame {
         public long timeMs;       // System.currentTimeMillis() получения
         public byte[] raw;        // 34 байта
@@ -141,8 +164,13 @@ public final class Protocol {
 
         /** Множитель GAS/BENZ (NaN, если не на газу). */
         public float multiplier() {
-            if (fuel != FUEL_GAS || gasMs <= 0 || benzMs <= 0) return Float.NaN;
+            if (fuel != FUEL_GAS || gasMs <= 0 || benzMs <= 0 || isTransient()) return Float.NaN;
             return gasMs / benzMs;
+        }
+
+        /** Переходный кадр (отсечка или короткий бензиновый импульс): Tб не отражает нагрузку. */
+        public boolean isTransient() {
+            return (status & (ST_SHORT_PETROL | ST_CUTOFF)) != 0;
         }
     }
 

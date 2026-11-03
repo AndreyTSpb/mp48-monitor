@@ -40,6 +40,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
         void onAlert(Alerts.Alert a);
         void onLogState(boolean on, String where);
         void onQuit();
+        void onMap(KMap map, String error);
     }
 
     public static final String ACTION_QUIT = "ru.gbo.aebmonitor.QUIT";
@@ -73,6 +74,8 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private int linkState = AebLink.ST_CLOSED;
     private String linkText = "Кабель не подключён";
     private Alerts.Alert alert;
+    private KMap kmap;
+    private String mapError;
     private boolean demo;
     private long demoT0;
     private long fpsWindowStart;
@@ -189,6 +192,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
             if (last != null) u.onFrame(last, fps);
             u.onAlert(alert);
             u.onLogState(logger.isOpen(), logger.where());
+            u.onMap(kmap, mapError);
         }
     }
 
@@ -264,7 +268,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
                 @Override public void run() {
                     if (link == null && !demo && d != null && usb.getDeviceList().containsValue(d)) connect(d);
                 }
-            }, 3000);
+            }, 1000);
         }
     }
 
@@ -272,6 +276,24 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public void onFrame(AebLink src, Protocol.Frame f) {
         if (src != link || demo) return;
         handleFrame(f, true);
+    }
+
+    @Override
+    public void onMap(AebLink src, KMap map, String error) {
+        if (src != link || demo) return;
+        if (map != null || kmap == null) kmap = map;   // при ошибке оставляем прежнюю карту
+        mapError = error;
+        if (ui != null) ui.onMap(kmap, error);
+    }
+
+    public KMap kmap() { return kmap; }
+
+    /** Перечитать карту K из блока. */
+    public boolean reloadMap() {
+        if (demo) { kmap = KMap.demo(); if (ui != null) ui.onMap(kmap, null); return true; }
+        if (link == null) return false;
+        link.requestMap();
+        return true;
     }
 
     @Override
@@ -418,6 +440,9 @@ public final class MonitorService extends Service implements AebLink.Listener {
             demoT0 = System.currentTimeMillis();
             trend.clear();
             setLink(AebLink.ST_ONLINE, "Демо-режим");
+            kmap = KMap.demo();
+            mapError = null;
+            if (ui != null) ui.onMap(kmap, null);
             h.post(demoTick);
         } else {
             demo = false;
@@ -426,6 +451,8 @@ public final class MonitorService extends Service implements AebLink.Listener {
             alert = null;
             last = null;
             trend.clear();
+            kmap = null;
+            if (ui != null) ui.onMap(null, null);
             setLink(AebLink.ST_CLOSED, "Кабель не подключён");
         }
         updateOverlay();

@@ -2,8 +2,8 @@ package ru.gbo.aebmonitor;
 
 /** Кольцевой буфер параметров для графиков (до 5 минут при 10 кадрах/с). */
 public final class Trend {
-    public static final int MULT = 0, PRESS = 1, LAMBDA = 2, BENZ = 3, GAS = 4, RPM = 5, MAP = 6;
-    public static final int CHANNELS = 7;
+    public static final int MULT = 0, PRESS = 1, LAMBDA = 2, BENZ = 3, GAS = 4, RPM = 5, MAP = 6, STEADY = 7;
+    public static final int CHANNELS = 8;
     private static final int CAP = 3600;
 
     private final long[] t = new long[CAP];
@@ -19,6 +19,7 @@ public final class Trend {
         v[GAS][head] = f.fuel == Protocol.FUEL_GAS ? f.gasMs : Float.NaN;
         v[RPM][head] = f.rpm;
         v[MAP][head] = f.mapBar;
+        v[STEADY][head] = f.isTransient() ? 0f : 1f;
         head = (head + 1) % CAP;
         if (size < CAP) size++;
     }

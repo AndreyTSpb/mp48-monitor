@@ -19,6 +19,7 @@ public final class AebLink extends Thread {
         void onLinkState(AebLink src, int state, String text);
         void onFrame(AebLink src, Protocol.Frame f);
         void onFuelResult(AebLink src, boolean ok, String text);
+        void onMap(AebLink src, KMap map, String error);
     }
 
     public static final int ST_OPENING = 0, ST_NO_ECU = 1, ST_ONLINE = 2, ST_ERROR = 3, ST_CLOSED = 4;
@@ -34,6 +35,7 @@ public final class AebLink extends Thread {
     private volatile boolean running = true;
     private volatile int fuelRequest = -1;          // -1 нет, 0 бензин, 1 газ
     private volatile boolean switching;
+    private volatile boolean mapRequest = true;     // прочитать карту K при подключении
     private final byte[] rx = new byte[256];
 
     public AebLink(UsbManager mgr, UsbDevice device, Listener l) {
@@ -51,6 +53,11 @@ public final class AebLink extends Thread {
 
     public boolean isSwitching() {
         return switching || fuelRequest >= 0;
+    }
+
+    /** Перечитать карту K из блока. */
+    public void requestMap() {
+        mapRequest = true;
     }
 
     public void shutdown() {
@@ -75,6 +82,10 @@ public final class AebLink extends Thread {
                 state(ST_ONLINE, "Связь есть");
                 int errors = 0;
                 while (running && errors < 10) {
+                    if (mapRequest) {
+                        mapRequest = false;
+                        readMap(port);
+                    }
                     int req = fuelRequest;
                     if (req >= 0) {
                         fuelRequest = -1;
@@ -120,6 +131,31 @@ public final class AebLink extends Thread {
             long left = Math.min(POLL_MS - (SystemClock.uptimeMillis() - t0), end - SystemClock.uptimeMillis());
             if (left > 0) sleepMs(left);
         }
+    }
+
+    /** Ответ с данными нужной длины (до 3 попыток) или null. */
+    private byte[] readData(Pl2303 port, byte[] tx, int len) throws IOException {
+        for (int i = 0; i < 3 && running; i++) {
+            Protocol.Reply r = xfer(port, tx);
+            if (r != null && r.kind == Protocol.Reply.OK && r.data.length >= len) return r.data;
+        }
+        return null;
+    }
+
+    /** Прочитать карту K: две оси и 13 строк (только чтение, как штатная программа). */
+    private void readMap(Pl2303 port) throws IOException {
+        int[] tb = Protocol.axis(readData(port, Protocol.readVar(Protocol.MAP_AXIS_TB), Protocol.MAP_COLS * 2));
+        int[] rp = Protocol.axis(readData(port, Protocol.readVar(Protocol.MAP_AXIS_RPM), Protocol.MAP_COLS * 2));
+        byte[][] rows = new byte[Protocol.MAP_ROWS][];
+        for (int r = 0; r < Protocol.MAP_ROWS && running; r++) {
+            rows[r] = readData(port, Protocol.readMapRow(r), Protocol.MAP_COLS);
+            if (r % 4 == 3) pollOnce(port);                // не замораживать табло во время чтения
+        }
+        final KMap m = KMap.fromRaw(tb, rp, rows);
+        final String err = m == null ? "Не удалось прочитать карту K из блока" : null;
+        ui.post(new Runnable() {
+            @Override public void run() { listener.onMap(AebLink.this, m, err); }
+        });
     }
 
     private boolean writeOk(Pl2303 port, byte[] v) throws IOException {

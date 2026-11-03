@@ -40,8 +40,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private static final String ACTION_PERMISSION = "ru.gbo.aebmonitor.USB_PERMISSION";
     private static final int REQ_LOCATION = 10;
-    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_STATS = 2;
-    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Статистика"};
+    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_STATS = 3, PAGES = 4;
+    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Статистика"};
 
     private UsbManager usb;
     private Prefs prefs;
@@ -52,6 +52,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     private DashView dash;
     private TrendView trendView;
     private StatsView statsView;
+    private MapView mapView;
     private int page = PAGE_DASH;
     private Button btnFuel, btnLog, btnPage, btnOverlay, btnMenu;
     private boolean rawMode;
@@ -75,6 +76,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         dash = new DashView(this);
         trendView = new TrendView(this);
         statsView = new StatsView(this);
+        mapView = new MapView(this);
         trendView.setWindowSec(prefs.trendWindowSec());
         trendView.setLowPress(prefs.lowPress());
         trendView.setWindowListener(new TrendView.WindowListener() {
@@ -82,6 +84,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         });
         pages.addView(dash);
         pages.addView(trendView);
+        pages.addView(mapView);
         pages.addView(statsView);
         root.addView(pages, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -97,7 +100,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             @Override public void onClick(View v) { toggleLog(); }
         });
         btnPage = addButton(bar, "Табло", 1f, new View.OnClickListener() {
-            @Override public void onClick(View v) { showPage((page + 1) % 3); }
+            @Override public void onClick(View v) { showPage((page + 1) % PAGES); }
         });
         btnOverlay = addButton(bar, "Мини-панель", 1f, new View.OnClickListener() {
             @Override public void onClick(View v) { toggleOverlay(); }
@@ -181,6 +184,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             svc.setUiVisible(true);
             trendView.setTrend(svc.trend);
             statsView.setStats(svc.stats);
+            mapView.setTrend(svc.trend);
             updateGpsInfo();
             dash.setDemo(svc.isDemo());
             if (pendingDevice != null) {
@@ -265,6 +269,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     @Override
     public void onFrame(Protocol.Frame f, float fps) {
         dash.setFrame(f, fps);
+        if (page == PAGE_MAP) mapView.setFrame(f);
         if (f.fuel != lastFuel) {
             lastFuel = f.fuel;
             updateFuelButton();
@@ -290,6 +295,11 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     }
 
     @Override
+    public void onMap(KMap map, String error) {
+        mapView.setMap(map, error);
+    }
+
+    @Override
     public void onQuit() {
         finish();
     }
@@ -301,6 +311,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         dash.setVisibility(pg == PAGE_DASH ? View.VISIBLE : View.GONE);
         trendView.setVisibility(pg == PAGE_TREND ? View.VISIBLE : View.GONE);
         statsView.setVisibility(pg == PAGE_STATS ? View.VISIBLE : View.GONE);
+        mapView.setVisibility(pg == PAGE_MAP ? View.VISIBLE : View.GONE);
+        if (pg == PAGE_MAP && svc != null) mapView.setFrame(svc.lastFrame());
         btnPage.setText(PAGE_NAMES[pg] + " ›");
         if (pg == PAGE_STATS) updateGpsInfo();
     }
@@ -343,7 +355,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     }
 
     private static final int M_RAW = 1, M_DEMO = 2, M_RECONNECT = 3, M_AUTOLOG = 4, M_REFILL = 5,
-            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10;
+            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10, M_MAP = 11;
 
     private void showMenu() {
         final boolean demo = svc != null && svc.isDemo();
@@ -356,6 +368,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         addItem(ids, names, M_REFILL, "Заправка (калибровка расхода)…");
         addItem(ids, names, M_RESET_TRIP, "Сбросить статистику поездки");
         if (!hasLocation()) addItem(ids, names, M_GPS, "Разрешить GPS (пробег)");
+        addItem(ids, names, M_MAP, "Перечитать карту K из блока");
         addItem(ids, names, M_RECONNECT, "Переподключить");
         addItem(ids, names, M_ABOUT, "О программе");
         addItem(ids, names, M_QUIT, "Выход");
@@ -419,6 +432,12 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                 connectIfPossible();
                 break;
             case M_ABOUT: aboutDialog(); break;
+            case M_MAP:
+                if (svc == null) break;
+                mapView.setMap(null, null);
+                if (svc.reloadMap()) toast("Читаю карту K из блока…");
+                else { toast("Нет связи с блоком"); mapView.setMap(svc.kmap(), null); }
+                break;
             case M_QUIT:
                 if (svc != null) svc.quit();
                 finish();

@@ -61,6 +61,20 @@ public class ProtocolTest {
     }
 
     @Test
+    public void multiplierIgnoresTransientFrames() {
+        byte[] d = new byte[34];
+        d[6] = (byte) 0x40; d[7] = 0x0E;   // газ ≈ 9,3 мс
+        d[8] = (byte) 0x92; d[9] = 0x01;   // бензин ≈ 1,0 мс (короткий импульс)
+        d[11] = (byte) 0xB1;
+        Protocol.Frame f = Protocol.decode(d, 0);
+        assertEquals(Protocol.FUEL_GAS, f.fuel);
+        assertTrue(Float.isNaN(f.multiplier()));
+        d[11] = (byte) 0xB0;
+        d[8] = (byte) 0x20; d[9] = 0x0B;   // бензин ≈ 7,2 мс
+        assertEquals(1.29f, Protocol.decode(d, 0).multiplier(), 0.01f);
+    }
+
+    @Test
     public void fuelSequenceMatchesStockSoftware() {
         byte[] petrol = {(byte) 0x84, 0x24, 0x09, 0x00};
         byte[] gas = {(byte) 0x84, 0x34, 0x09, 0x00};
