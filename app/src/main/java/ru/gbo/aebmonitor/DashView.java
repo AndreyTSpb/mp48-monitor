@@ -67,6 +67,65 @@ public final class DashView extends View {
     public void setLogging(boolean on) { logging = on; invalidate(); }
     public void setDemo(boolean on) { demo = on; invalidate(); }
     public void setAlert(Alerts.Alert a) { alert = a; invalidate(); }
+    public void setEco(Eco e) { eco = e; }
+
+    private Eco eco;
+
+    /** Компактная эко-полоса: шкала экономичности + расход/подсказка. */
+    private void drawEco(Canvas c, float x0, float y0, float x1, float y1, float u, boolean fresh) {
+        float eh = y1 - y0;
+        r.set(x0, y0, x1, y1);
+        fill.setColor(TILE);
+        c.drawRoundRect(r, eh * 0.18f, eh * 0.18f, fill);
+
+        float ip = eh * 0.2f;
+        int level = fresh ? eco.level : Eco.LEVEL_NONE;
+        int col = level == Eco.LEVEL_GOOD ? GAS : level == Eco.LEVEL_OK ? WAIT : level == Eco.LEVEL_BAD ? ALERT : DIM;
+
+        // слева: подпись «Эконом» + значение
+        text.setTypeface(normal);
+        text.setTextAlign(Paint.Align.LEFT);
+        text.setColor(LABEL);
+        text.setTextSize(eh * 0.26f);
+        c.drawText("Эконом", x0 + ip, y0 + eh * 0.4f, text);
+        String val;
+        if (fresh && !Float.isNaN(eco.l100)) val = String.format(ru, "%.1f л/100", eco.l100);
+        else if (fresh && !Float.isNaN(eco.lh)) val = String.format(ru, "%.1f л/ч", eco.lh);
+        else if (fresh && eco.hint != null) val = eco.hint;
+        else val = "—";
+        text.setTypeface(bold);
+        text.setColor(col);
+        text.setTextSize(eh * 0.34f);
+        float labelW = Math.max(text.measureText(val), 18 * u);
+        c.drawText(val, x0 + ip, y1 - eh * 0.25f, text);
+
+        // справа: шкала красный→зелёный с маркером
+        float bx0 = x0 + ip + labelW + 2 * u, bx1 = x1 - ip, by = (y0 + y1) / 2, bh = eh * 0.3f;
+        int seg = 40;
+        for (int i = 0; i < seg; i++) {
+            float t = i / (float) (seg - 1);
+            fill.setColor(ecoGrad(t));
+            float xa = bx0 + (bx1 - bx0) * i / seg, xb = bx0 + (bx1 - bx0) * (i + 1) / seg;
+            c.drawRect(xa, by - bh / 2, xb + 1, by + bh / 2, fill);
+        }
+        if (fresh && !Float.isNaN(eco.ratio)) {
+            float t = Math.max(0f, Math.min(1f, (1.3f - eco.ratio) / (1.3f - 0.8f)));
+            float mx = bx0 + (bx1 - bx0) * t;
+            fill.setColor(VALUE);
+            c.drawRect(mx - u * 0.25f, by - bh, mx + u * 0.25f, by + bh, fill);
+        }
+    }
+
+    private static int ecoGrad(float t) {
+        int[] s = {0xFFFF5252, 0xFFFFB300, 0xFF3DDC84};
+        float x = t * (s.length - 1);
+        int i = Math.min(s.length - 2, (int) x);
+        float f = x - i;
+        int a = s[i], b = s[i + 1];
+        int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+        int br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+        return 0xFF000000 | (Math.round(ar + (br - ar) * f) << 16) | (Math.round(ag + (bg - ag) * f) << 8) | Math.round(ab + (bb - ab) * f);
+    }
 
     @Override
     protected void onDraw(Canvas c) {
@@ -88,10 +147,19 @@ public final class DashView extends View {
         drawLambda(c, pad, footTop, w - pad, footTop + footH, u, f);
         if (raw) drawRaw(c, pad, footTop + footH + u, w - pad, h - pad, u);
 
+        // ---- Эко-полоса (над лямбдой) ----
+        float ecoH = eco != null ? 7 * u : 0;
+        float tilesBottom = footTop - pad;
+        if (ecoH > 0) {
+            float ecoTop = footTop - pad - ecoH;
+            drawEco(c, pad, ecoTop, w - pad, ecoTop + ecoH, u, f != null);
+            tilesBottom = ecoTop - pad;
+        }
+
         // ---- Плитки ----
         boolean landscape = w > h * 1.15f;
         int cols = landscape ? 4 : 2, rows = landscape ? 2 : 4;
-        float gx0 = pad, gy0 = pad + headH + pad, gx1 = w - pad, gy1 = footTop - pad;
+        float gx0 = pad, gy0 = pad + headH + pad, gx1 = w - pad, gy1 = tilesBottom;
         float tw = (gx1 - gx0 - pad * (cols - 1)) / cols;
         float th = (gy1 - gy0 - pad * (rows - 1)) / rows;
 
@@ -134,7 +202,7 @@ public final class DashView extends View {
         int color;
         if (f == null) { fuel = "НЕТ ДАННЫХ"; color = DIM; }
         else if (f.fuel == Protocol.FUEL_GAS) { fuel = "ГАЗ"; color = GAS; }
-        else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = "ГАЗ · ожидание"; color = WAIT; }
+        else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = f.startDelay() ? "ГАЗ · задержка пуска" : "ГАЗ · ждёт перехода"; color = WAIT; }
         else { fuel = "БЕНЗИН"; color = PETROL; }
 
         text.setTypeface(bold);

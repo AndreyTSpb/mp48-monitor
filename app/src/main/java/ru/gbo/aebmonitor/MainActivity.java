@@ -40,8 +40,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private static final String ACTION_PERMISSION = "ru.gbo.aebmonitor.USB_PERMISSION";
     private static final int REQ_LOCATION = 10;
-    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_MCURVE = 3, PAGE_STATS = 4, PAGES = 5;
-    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Множитель", "Статистика"};
+    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_MCURVE = 3, PAGE_ECO = 4, PAGE_STATS = 5, PAGES = 6;
+    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Множитель", "Эконом", "Статистика"};
 
     private UsbManager usb;
     private Prefs prefs;
@@ -54,6 +54,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     private StatsView statsView;
     private MapView mapView;
     private MultCurveView mcurveView;
+    private EcoView ecoView;
     private int page = PAGE_DASH;
     private Button btnFuel, btnLog, btnPage, btnOverlay, btnMenu;
     private boolean rawMode;
@@ -81,6 +82,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         statsView = new StatsView(this);
         mapView = new MapView(this);
         mcurveView = new MultCurveView(this);
+        ecoView = new EcoView(this);
         trendView.setWindowSec(prefs.trendWindowSec());
         trendView.setLowPress(prefs.lowPress());
         trendView.setWindowListener(new TrendView.WindowListener() {
@@ -90,6 +92,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         pages.addView(trendView);
         pages.addView(mapView);
         pages.addView(mcurveView);
+        pages.addView(ecoView);
         pages.addView(statsView);
         mapView.setMode(prefs.mapCellMode());
         mapView.setModeListener(new MapView.ModeListener() {
@@ -207,6 +210,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             mapView.setTrend(svc.trend);
             mapView.setCells(svc.cells);
             mcurveView.setCells(svc.cells);
+            ecoView.setEco(svc.eco);
+            ecoView.setStats(svc.stats);
             updateGpsInfo();
             dash.setDemo(svc.isDemo());
             if (pendingDevice != null) {
@@ -293,6 +298,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         dash.setFrame(f, fps);
         if (page == PAGE_MAP) mapView.setFrame(f);
         if (page == PAGE_MCURVE) mcurveView.setFrame(f);
+        if (page == PAGE_ECO) ecoView.setFrame(f);
+        dash.setEco(svc != null ? svc.eco : null);
         if (f.fuel != lastFuel) {
             lastFuel = f.fuel;
             updateFuelButton();
@@ -337,8 +344,10 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         statsView.setVisibility(pg == PAGE_STATS ? View.VISIBLE : View.GONE);
         mapView.setVisibility(pg == PAGE_MAP ? View.VISIBLE : View.GONE);
         mcurveView.setVisibility(pg == PAGE_MCURVE ? View.VISIBLE : View.GONE);
+        ecoView.setVisibility(pg == PAGE_ECO ? View.VISIBLE : View.GONE);
         if (pg == PAGE_MAP && svc != null) mapView.setFrame(svc.lastFrame());
         if (pg == PAGE_MCURVE && svc != null) { mcurveView.setMap(svc.kmap()); mcurveView.setFrame(svc.lastFrame()); }
+        if (pg == PAGE_ECO && svc != null) ecoView.setFrame(svc.lastFrame());
         btnPage.setText(PAGE_NAMES[pg] + " ›");
         if (pg == PAGE_STATS) updateGpsInfo();
     }
@@ -451,7 +460,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             case M_SETTINGS: settingsDialog(); break;
             case M_REFILL: refillDialog(); break;
             case M_RESET_TRIP:
-                if (svc != null) { svc.stats.resetTrip(); svc.cells.reset(); statsView.invalidate(); mapView.invalidate(); }
+                if (svc != null) { svc.stats.resetTrip(); svc.cells.reset(); svc.eco.reset(); statsView.invalidate(); mapView.invalidate(); }
                 break;
             case M_GPS: requestLocation(); break;
             case M_RECONNECT:

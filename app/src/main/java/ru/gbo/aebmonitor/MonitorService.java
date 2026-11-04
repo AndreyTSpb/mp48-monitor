@@ -63,6 +63,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     public final Trend trend = new Trend();
     public final CellStats cells = new CellStats();
+    public final Eco eco = new Eco();
     public Stats stats;
     private final Alerts alerts = new Alerts();
     private final CsvLogger logger = new CsvLogger();
@@ -166,7 +167,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private String notifText() {
         if (demo) return "Демо-режим";
         if (last != null && linkState == AebLink.ST_ONLINE) {
-            String fuel = last.fuel == Protocol.FUEL_GAS ? "газ" : last.fuel == Protocol.FUEL_GAS_WAIT ? "ожидание газа" : "бензин";
+            String fuel = last.fuel == Protocol.FUEL_GAS ? "газ" : last.fuel == Protocol.FUEL_GAS_WAIT ? (last.startDelay() ? "задержка после пуска" : "ожидание газа") : "бензин";
             return linkText + " · " + fuel + (logger.isOpen() ? " · запись" : "");
         }
         return linkText;
@@ -317,6 +318,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
         logger.write(f);
         cells.onFrame(f, kmap);
         if (real) stats.onFrame(f);
+        eco.onFrame(f, stats.speedKmh, stats.k);
         Alerts.Alert fresh = alerts.onFrame(f);
         if (fresh != null) beep(fresh.type);
         Alerts.Alert cur = alerts.current(f);

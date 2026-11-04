@@ -106,7 +106,7 @@ public final class OverlayPanel {
             int col;
             if (!fresh) { fuel = online ? "…" : "НЕТ"; col = Theme.DIM; }
             else if (f.fuel == Protocol.FUEL_GAS) { fuel = "ГАЗ"; col = Theme.GAS; }
-            else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = "ЖДЁТ"; col = Theme.WAIT; }
+            else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = f.startDelay() ? "ПУСК" : "ЖДЁТ"; col = Theme.WAIT; }
             else { fuel = "БЕНЗ"; col = Theme.PETROL; }
             float pad = h * 0.12f;
             float bw = w * 0.30f;

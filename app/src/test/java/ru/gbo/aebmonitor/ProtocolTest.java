@@ -87,4 +87,21 @@ public class ProtocolTest {
         }
         assertArrayEquals(h("2903002c"), Protocol.readVar(3));
     }
+
+    /** Байт состояния после пуска (запись 04.11.2026 19:00): 0x88 → 0xA8 → 0xB0. */
+    @Test
+    public void fuelStateAfterStart() {
+        int[] st = {0xA0, 0x88, 0xA8, 0xB0};
+        int[] fuel = {Protocol.FUEL_PETROL, Protocol.FUEL_GAS_WAIT, Protocol.FUEL_GAS_WAIT, Protocol.FUEL_GAS};
+        boolean[] delay = {false, true, false, false};
+        int[] valve = {Protocol.VALVE_CLOSED, Protocol.VALVE_CLOSED, Protocol.VALVE_FILL, Protocol.VALVE_OPEN};
+        for (int i = 0; i < st.length; i++) {
+            byte[] d = new byte[Protocol.REALTIME_LEN];
+            d[11] = (byte) st[i];
+            Protocol.Frame f = Protocol.decode(d, 0);
+            assertEquals(fuel[i], f.fuel);
+            assertEquals(delay[i], f.startDelay());
+            assertEquals(valve[i], f.valve());
+        }
+    }
 }
