@@ -40,8 +40,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private static final String ACTION_PERMISSION = "ru.gbo.aebmonitor.USB_PERMISSION";
     private static final int REQ_LOCATION = 10;
-    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_STATS = 3, PAGES = 4;
-    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Статистика"};
+    private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_MCURVE = 3, PAGE_STATS = 4, PAGES = 5;
+    private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Множитель", "Статистика"};
 
     private UsbManager usb;
     private Prefs prefs;
@@ -53,6 +53,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     private TrendView trendView;
     private StatsView statsView;
     private MapView mapView;
+    private MultCurveView mcurveView;
     private int page = PAGE_DASH;
     private Button btnFuel, btnLog, btnPage, btnOverlay, btnMenu;
     private boolean rawMode;
@@ -79,6 +80,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         trendView = new TrendView(this);
         statsView = new StatsView(this);
         mapView = new MapView(this);
+        mcurveView = new MultCurveView(this);
         trendView.setWindowSec(prefs.trendWindowSec());
         trendView.setLowPress(prefs.lowPress());
         trendView.setWindowListener(new TrendView.WindowListener() {
@@ -87,6 +89,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         pages.addView(dash);
         pages.addView(trendView);
         pages.addView(mapView);
+        pages.addView(mcurveView);
         pages.addView(statsView);
         mapView.setMode(prefs.mapCellMode());
         mapView.setModeListener(new MapView.ModeListener() {
@@ -203,6 +206,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             statsView.setStats(svc.stats);
             mapView.setTrend(svc.trend);
             mapView.setCells(svc.cells);
+            mcurveView.setCells(svc.cells);
             updateGpsInfo();
             dash.setDemo(svc.isDemo());
             if (pendingDevice != null) {
@@ -288,6 +292,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     public void onFrame(Protocol.Frame f, float fps) {
         dash.setFrame(f, fps);
         if (page == PAGE_MAP) mapView.setFrame(f);
+        if (page == PAGE_MCURVE) mcurveView.setFrame(f);
         if (f.fuel != lastFuel) {
             lastFuel = f.fuel;
             updateFuelButton();
@@ -315,6 +320,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     @Override
     public void onMap(KMap map, String error) {
         mapView.setMap(map, error);
+        mcurveView.setMap(map);
     }
 
     @Override
@@ -330,7 +336,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         trendView.setVisibility(pg == PAGE_TREND ? View.VISIBLE : View.GONE);
         statsView.setVisibility(pg == PAGE_STATS ? View.VISIBLE : View.GONE);
         mapView.setVisibility(pg == PAGE_MAP ? View.VISIBLE : View.GONE);
+        mcurveView.setVisibility(pg == PAGE_MCURVE ? View.VISIBLE : View.GONE);
         if (pg == PAGE_MAP && svc != null) mapView.setFrame(svc.lastFrame());
+        if (pg == PAGE_MCURVE && svc != null) { mcurveView.setMap(svc.kmap()); mcurveView.setFrame(svc.lastFrame()); }
         btnPage.setText(PAGE_NAMES[pg] + " ›");
         if (pg == PAGE_STATS) updateGpsInfo();
     }

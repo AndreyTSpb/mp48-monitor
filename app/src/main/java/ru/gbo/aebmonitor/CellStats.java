@@ -27,8 +27,10 @@ public final class CellStats {
         n[ri][cj]++;
         sumPress[ri][cj] += f.pressBar;
         if (f.lambdaV > 0.45f) nRich[ri][cj]++;
+        // В среднее множителя берём только физичные значения: карта ГБО лежит в районе
+        // 1,0–1,8, а на сбросе время бензина падает до ~2 мс и даёт ложное деление (gas/benz → 5+).
         float m = f.multiplier();
-        if (!Float.isNaN(m)) { sumMult[ri][cj] += m; nMult[ri][cj]++; }
+        if (!Float.isNaN(m) && m >= 0.7f && m <= 2.2f) { sumMult[ri][cj] += m; nMult[ri][cj]++; }
     }
 
     public void reset() {
