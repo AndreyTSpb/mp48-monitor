@@ -68,8 +68,56 @@ public final class DashView extends View {
     public void setDemo(boolean on) { demo = on; invalidate(); }
     public void setAlert(Alerts.Alert a) { alert = a; invalidate(); }
     public void setEco(Eco e) { eco = e; }
+    public void setStats(Stats s) { stats = s; }
 
     private Eco eco;
+    private Stats stats;
+
+    /** Цвет уровня газа: зелёный > 25 %, жёлтый 15–25 %, красный < 15 %. */
+    static int gasLevelColor(double frac) {
+        return frac < Alerts.LOW_GAS_FRAC ? ALERT : frac < Alerts.LOW_GAS_RESET ? WAIT : GAS;
+    }
+
+    /** Секция «Баллон» справа в эко-полосе. Возвращает левую границу секции (или x1, если не рисуется). */
+    private float drawGas(Canvas c, float x0, float y0, float x1, float y1, float u) {
+        double frac = stats != null ? stats.gasLeftFrac() : Double.NaN;
+        if (Double.isNaN(frac)) return x1;
+        double lit = stats.gasLeft(), km = stats.rangeKm();
+        float eh = y1 - y0, ip = eh * 0.2f;
+        String val = Double.isNaN(km) ? String.format(ru, "%.0f л", lit)
+                : String.format(ru, "%.0f л · %.0f км", lit, km);
+        text.setTypeface(bold);
+        text.setTextSize(eh * 0.34f);
+        float vw = text.measureText(val);
+        text.setTypeface(normal);
+        text.setTextSize(eh * 0.26f);
+        String lab = String.format(ru, "Баллон %.0f %%", frac * 100);
+        float lw = text.measureText(lab);
+        float barW = 1.6f * u;
+        float secW = Math.max(vw, lw) + barW + ip * 2.5f;
+        float sx0 = x1 - secW;
+        if (sx0 < x0 + (x1 - x0) * 0.45f) return x1;     // не помещается — не рисуем
+        int col = gasLevelColor(frac);
+        // разделитель
+        fill.setColor(TILE_EDGE);
+        c.drawRect(sx0, y0 + eh * 0.15f, sx0 + Math.max(1, u * 0.15f), y1 - eh * 0.15f, fill);
+        // вертикальный столбик уровня
+        float bx0 = sx0 + ip, by0 = y0 + eh * 0.15f, by1 = y1 - eh * 0.15f;
+        fill.setColor(DIM);
+        c.drawRect(bx0, by0, bx0 + barW, by1, fill);
+        fill.setColor(col);
+        c.drawRect(bx0, by1 - (float) ((by1 - by0) * frac), bx0 + barW, by1, fill);
+        // текст
+        float tx = bx0 + barW + ip * 0.8f;
+        text.setTextAlign(Paint.Align.LEFT);
+        text.setColor(LABEL);
+        c.drawText(lab, tx, y0 + eh * 0.4f, text);
+        text.setTypeface(bold);
+        text.setTextSize(eh * 0.34f);
+        text.setColor(col == GAS ? VALUE : col);
+        c.drawText(val, tx, y1 - eh * 0.25f, text);
+        return sx0;
+    }
 
     /** Компактная эко-полоса: шкала экономичности + расход/подсказка. */
     private void drawEco(Canvas c, float x0, float y0, float x1, float y1, float u, boolean fresh) {
@@ -81,6 +129,9 @@ public final class DashView extends View {
         float ip = eh * 0.2f;
         int level = fresh ? eco.level : Eco.LEVEL_NONE;
         int col = level == Eco.LEVEL_GOOD ? GAS : level == Eco.LEVEL_OK ? WAIT : level == Eco.LEVEL_BAD ? ALERT : DIM;
+
+        // справа: уровень газа в баллоне (если задан объём и есть калибровка)
+        float gasX = drawGas(c, x0, y0, x1, y1, u);
 
         // слева: подпись «Эконом» + значение
         text.setTypeface(normal);
@@ -96,19 +147,20 @@ public final class DashView extends View {
         text.setTypeface(bold);
         text.setColor(col);
         text.setTextSize(eh * 0.34f);
+        val = ellipsize(val, gasX - x0 - 2 * ip);
         float labelW = Math.max(text.measureText(val), 18 * u);
         c.drawText(val, x0 + ip, y1 - eh * 0.25f, text);
 
-        // справа: шкала красный→зелёный с маркером
-        float bx0 = x0 + ip + labelW + 2 * u, bx1 = x1 - ip, by = (y0 + y1) / 2, bh = eh * 0.3f;
-        int seg = 40;
+        // шкала красный→зелёный с маркером
+        float bx0 = x0 + ip + labelW + 2 * u, bx1 = gasX - ip, by = (y0 + y1) / 2, bh = eh * 0.3f;
+        int seg = bx1 - bx0 > 6 * u ? 40 : 0;           // нет места — шкалу не рисуем
         for (int i = 0; i < seg; i++) {
             float t = i / (float) (seg - 1);
             fill.setColor(ecoGrad(t));
             float xa = bx0 + (bx1 - bx0) * i / seg, xb = bx0 + (bx1 - bx0) * (i + 1) / seg;
             c.drawRect(xa, by - bh / 2, xb + 1, by + bh / 2, fill);
         }
-        if (fresh && !Float.isNaN(eco.ratio)) {
+        if (seg > 0 && fresh && !Float.isNaN(eco.ratio)) {
             float t = Math.max(0f, Math.min(1f, (1.3f - eco.ratio) / (1.3f - 0.8f)));
             float mx = bx0 + (bx1 - bx0) * t;
             fill.setColor(VALUE);
@@ -201,8 +253,9 @@ public final class DashView extends View {
         String fuel;
         int color;
         if (f == null) { fuel = "НЕТ ДАННЫХ"; color = DIM; }
+        else if (f.engineStopped()) { fuel = "ЗАГЛУШЁН"; color = DIM; }
         else if (f.fuel == Protocol.FUEL_GAS) { fuel = "ГАЗ"; color = GAS; }
-        else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = f.startDelay() ? "ГАЗ · задержка пуска" : "ГАЗ · ждёт перехода"; color = WAIT; }
+        else if (f.fuel == Protocol.FUEL_GAS_WAIT) { fuel = "ГАЗ · ждёт перехода"; color = WAIT; }
         else { fuel = "БЕНЗИН"; color = PETROL; }
 
         text.setTypeface(bold);
@@ -217,7 +270,7 @@ public final class DashView extends View {
         r.set(x0, y0, x0 + bw, y1);
         fill.setColor(color);
         c.drawRoundRect(r, h * 0.22f, h * 0.22f, fill);
-        text.setColor(f == null ? VALUE : 0xFF0E1116);
+        text.setColor(f == null || f.engineStopped() ? VALUE : 0xFF0E1116);
         text.setTextAlign(Paint.Align.CENTER);
         c.drawText(fuel, r.centerX(), centerBase(r.centerY()), text);
 

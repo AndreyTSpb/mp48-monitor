@@ -66,13 +66,18 @@ public final class StatsView extends View {
                 {"Расход газа", per100(stats.per100(t))},
         };
         double lit = stats.litersSinceRefill();
+        double left = stats.gasLeft(), range = stats.rangeKm();
+        String gasLeft = stats.tankLiters <= 0 ? "нет объёма (Меню → Заправка)"
+                : Double.isNaN(left) ? "нет калибровки"
+                : String.format(ru, "≈ %.1f л (%.0f %%)", left, stats.gasLeftFrac() * 100);
         String[][] refill = {
+                {"В баллоне", gasLeft},
+                {"Запас хода на газу", Double.isNaN(range) ? "—" : String.format(ru, "≈ %.0f км", range)},
                 {"Израсходовано газа", Double.isNaN(lit) ? "нет калибровки" : String.format(ru, "≈ %.1f л", lit)},
                 {"Пробег на газу", km(rf.kmGas)},
                 {"Пробег на бензине", km(rf.kmPetrol)},
                 {"Доля газа", pct(rf.gasShare())},
                 {"Средний расход", per100(stats.per100(rf))},
-                {"Калибровка", stats.k > 0 ? "есть" : "после 2-й заправки"},
         };
         drawCard(c, pad, top, pad + cw, top + chh, u, "Поездка (с запуска)", trip);
         if (land) drawCard(c, 2 * pad + cw, top, 2 * pad + 2 * cw, top + chh, u, "С последней заправки", refill);

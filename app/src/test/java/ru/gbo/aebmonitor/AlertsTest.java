@@ -62,4 +62,20 @@ public class AlertsTest {
         assertNotNull(x);
         assertEquals(Alerts.NOT_WARMING, x.type);
     }
+
+    @Test
+    public void lowGasOncePerRefill() {
+        Alerts a = new Alerts();
+        assertNull(a.onGasLevel(Double.NaN, Double.NaN, Double.NaN, 0));      // нет калибровки
+        assertNull(a.onGasLevel(0.40, 16, 100, 0));
+        Alerts.Alert x = a.onGasLevel(0.14, 5.6, 34, 1000);
+        assertNotNull(x);
+        assertEquals(Alerts.LOW_GAS, x.type);
+        assertNull(a.onGasLevel(0.10, 4, 24, 2000));                           // не повторяется
+        assertNotNull(a.current(null));                                         // висит 20 с
+        assertNull(a.onGasLevel(0.10, 4, 24, 22000));
+        assertNull(a.current(null));
+        assertNull(a.onGasLevel(1.0, 40, 240, 30000));                         // заправка — сброс
+        assertNotNull(a.onGasLevel(0.12, 4.8, 29, 40000));
+    }
 }

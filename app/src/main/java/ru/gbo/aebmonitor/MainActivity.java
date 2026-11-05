@@ -300,6 +300,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         if (page == PAGE_MCURVE) mcurveView.setFrame(f);
         if (page == PAGE_ECO) ecoView.setFrame(f);
         dash.setEco(svc != null ? svc.eco : null);
+        dash.setStats(svc != null ? svc.stats : null);
         if (f.fuel != lastFuel) {
             lastFuel = f.fuel;
             updateFuelButton();
@@ -400,7 +401,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         addItem(ids, names, M_DEMO, check(demo) + "Демо-режим");
         addItem(ids, names, M_AUTOLOG, check(prefs.autoLog()) + "Автозапись при подключении");
         addItem(ids, names, M_SETTINGS, "Настройки предупреждений…");
-        addItem(ids, names, M_REFILL, "Заправка (калибровка расхода)…");
+        addItem(ids, names, M_REFILL, "Заправка и уровень газа…");
         addItem(ids, names, M_RESET_TRIP, "Сбросить статистику поездки");
         addItem(ids, names, M_RECORDS, "Записи…");
         addItem(ids, names, M_NIGHT, "Ночной режим…");
@@ -567,10 +568,19 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         int p = dp(20);
         box.setPadding(p, dp(8), p, 0);
         TextView hint = new TextView(this);
-        hint.setText("Заправляйтесь каждый раз до полного (до отсечки) и вводите, сколько литров вошло. "
-                + "Первая такая заправка запускает отсчёт, со второй появляется оценка расхода.");
+        hint.setText("Для калибровки заправляйтесь до полного (до отсечки) и вводите, сколько литров вошло. "
+                + "Первая такая заправка запускает отсчёт, со второй появляется оценка расхода. "
+                + "Доливку не до полного отметьте снятой галкой — она увеличит уровень в баллоне.");
         box.addView(hint);
         final EditText lit = numberField(box, "Залито литров", "", true);
+        final CheckBox full = new CheckBox(this);
+        full.setText("До полного");
+        full.setChecked(true);
+        box.addView(full);
+        double tank = svc != null ? svc.stats.tankLiters : 0;
+        final EditText vol = numberField(box,
+                "Полезный объём баллона, л — сколько входит от пустого до полного (≈ 80 % от объёма на шильдике)",
+                tank > 0 ? String.format(Locale.US, "%.0f", tank) : "", true);
         new AlertDialog.Builder(this)
                 .setTitle("Заправка")
                 .setView(box)
@@ -578,9 +588,13 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                     @Override
                     public void onClick(DialogInterface d, int w) {
                         if (svc == null) return;
+                        float v = parseF(vol.getText().toString(), 0);
+                        if (v > 0 && Math.abs(v - svc.stats.tankLiters) > 0.01) svc.stats.setTank(Math.min(300f, v));
                         float l = parseF(lit.getText().toString(), 0);
-                        toast(svc.stats.onRefill(l));
+                        if (l > 0) toast(svc.stats.onRefill(l, full.isChecked()));
+                        else if (v > 0) toast(String.format(Locale.getDefault(), "Объём баллона: %.0f л", svc.stats.tankLiters));
                         statsView.invalidate();
+                        dash.invalidate();
                     }
                 })
                 .setNegativeButton("Отмена", null)

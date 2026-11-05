@@ -167,7 +167,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private String notifText() {
         if (demo) return "Демо-режим";
         if (last != null && linkState == AebLink.ST_ONLINE) {
-            String fuel = last.fuel == Protocol.FUEL_GAS ? "газ" : last.fuel == Protocol.FUEL_GAS_WAIT ? (last.startDelay() ? "задержка после пуска" : "ожидание газа") : "бензин";
+            String fuel = last.engineStopped() ? "двигатель заглушён" : last.fuel == Protocol.FUEL_GAS ? "газ" : last.fuel == Protocol.FUEL_GAS_WAIT ? "ожидание газа" : "бензин";
             return linkText + " · " + fuel + (logger.isOpen() ? " · запись" : "");
         }
         return linkText;
@@ -315,11 +315,14 @@ public final class MonitorService extends Service implements AebLink.Listener {
         }
         last = f;
         trend.add(f);
-        logger.write(f);
         cells.onFrame(f, kmap);
         if (real) stats.onFrame(f);
         eco.onFrame(f, stats.speedKmh, stats.k);
+        double gasL = stats.gasLeft(), rangeKm = stats.rangeKm();
+        logger.write(f, stats.speedKmh, eco, gasL, rangeKm);
         Alerts.Alert fresh = alerts.onFrame(f);
+        Alerts.Alert gasAlert = real ? alerts.onGasLevel(stats.gasLeftFrac(), gasL, rangeKm, f.timeMs) : null;
+        if (fresh == null) fresh = gasAlert;
         if (fresh != null) beep(fresh.type);
         Alerts.Alert cur = alerts.current(f);
         boolean changed = (cur == null) != (alert == null) || (cur != null && cur.type != alert.type);

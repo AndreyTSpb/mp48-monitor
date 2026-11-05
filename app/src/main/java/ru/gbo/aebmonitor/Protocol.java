@@ -149,7 +149,8 @@ public final class Protocol {
     /** Биты байта состояния (11). 0x10 — на газу, 0x08 — газ выбран. */
     public static final int ST_SHORT_PETROL = 0x01;  // короткий бензиновый импульс (< ~1,5 мс) в переходе, газ держится прежним
     public static final int ST_CUTOFF = 0x04;        // отсечка топлива (сброс газа), Tб = Tг = 0
-    public static final int ST_AFTER_START = 0x20;   // выставлен, когда прошла задержка после пуска (~50 с); 0x88 = газ выбран, задержка идёт
+    public static final int ST_AFTER_START = 0x20;   // таймер «после пуска»: выставляется через ~45–95 с, на переход на газ не влияет (0x90 — газ без него)
+    public static final int ST_ENGINE = 0x80;        // двигатель работает (0x80/0x00 при остановке)
 
     public static final class Frame {
         public long timeMs;       // System.currentTimeMillis() получения
@@ -174,19 +175,20 @@ public final class Protocol {
             return (status & (ST_SHORT_PETROL | ST_CUTOFF)) != 0;
         }
 
-        /** Газ выбран, но не прошла задержка после пуска (байт состояния 0x88: нет бита 0x20). */
-        public boolean startDelay() {
-            return fuel == FUEL_GAS_WAIT && (status & ST_AFTER_START) == 0;
+        /** Двигатель заглушён (обороты 0; при остановке блок даёт 0x80 → 0x00). */
+        public boolean engineStopped() {
+            return rpm < 100;
         }
 
         /**
          * Состояние газового клапана по режиму блока:
-         * бензин или задержка после пуска (0x88) → закрыт; газ выбран, задержка прошла, ждёт перехода (0xA8) →
+         * бензин или двигатель заглушён → закрыт; газ выбран, ждёт условий перехода (0x88/0xA8) →
          * наполнение (предоткрытие); работа на газу → открыт.
          */
         public int valve() {
+            if (engineStopped()) return VALVE_CLOSED;
             if (fuel == FUEL_GAS) return VALVE_OPEN;
-            if (fuel == FUEL_GAS_WAIT && !startDelay()) return VALVE_FILL;
+            if (fuel == FUEL_GAS_WAIT) return VALVE_FILL;
             return VALVE_CLOSED;
         }
     }

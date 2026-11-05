@@ -59,18 +59,28 @@ public final class CsvLogger {
         }
         w = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
         w.write("ГБО Монитор, запись " + stamp + "\n");
-        w.write("TEMPO\tGIRI\tLAMBDA\tGAS\tBENZ\tPRESS\tMAP\tT.RID\tT.GAS\tSTATO\tRAW\n");
+        // колонки после RAW — данные приложения (скорость GPS, эко-индикатор, уровень газа); первые 11 как раньше
+        w.write("TEMPO\tGIRI\tLAMBDA\tGAS\tBENZ\tPRESS\tMAP\tT.RID\tT.GAS\tSTATO\tRAW"
+                + "\tSPEED\tL100\tLH\tECO_RATIO\tECO_LEVEL\tGAS_L\tRANGE_KM\n");
         t0 = 0;
         lastFlush = System.currentTimeMillis();
     }
 
-    public void write(Protocol.Frame f) {
+    public void write(Protocol.Frame f, float speedKmh, Eco eco, double gasL, double rangeKm) {
         if (w == null || f == null) return;
         if (t0 == 0) t0 = f.timeMs;
         try {
-            w.write(String.format(Locale.US, "%d\t%d\t%.2f\t%.2f\t%.2f\t%.3f\t%.3f\t%.1f\t%.1f\t%02X\t%s\n",
+            w.write(String.format(Locale.US, "%d\t%d\t%.2f\t%.2f\t%.2f\t%.3f\t%.3f\t%.1f\t%.1f\t%02X\t%s",
                     f.timeMs - t0, f.rpm, f.lambdaV, f.gasMs, f.benzMs, f.pressBar, f.mapBar,
                     f.tRid, f.tGas, f.status, Protocol.hex(f.raw)));
+            w.write('\t'); w.write(num(speedKmh, "%.1f"));
+            w.write('\t'); w.write(eco == null ? "" : num(eco.l100, "%.1f"));
+            w.write('\t'); w.write(eco == null ? "" : num(eco.lh, "%.2f"));
+            w.write('\t'); w.write(eco == null ? "" : num(eco.ratio, "%.3f"));
+            w.write('\t'); w.write(eco == null ? "" : String.valueOf(eco.level));
+            w.write('\t'); w.write(num(gasL, "%.2f"));
+            w.write('\t'); w.write(num(rangeKm, "%.0f"));
+            w.write('\n');
             long now = System.currentTimeMillis();
             if (now - lastFlush > 2000) {
                 w.flush();
@@ -79,6 +89,10 @@ public final class CsvLogger {
         } catch (IOException e) {
             stop();
         }
+    }
+
+    private static String num(double v, String fmt) {
+        return Double.isNaN(v) ? "" : String.format(Locale.US, fmt, v);
     }
 
     public void stop() {

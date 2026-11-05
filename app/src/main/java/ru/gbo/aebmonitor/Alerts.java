@@ -6,7 +6,8 @@ import java.util.Locale;
  * Предупреждения по кадрам параметров (чистая логика, без Android).
  *  - низкое давление газа на газу (дольше 2 с);
  *  - блок сам ушёл с газа на бензин при низком давлении (кончается газ?);
- *  - газ выбран, но переход не происходит дольше N минут (редуктор не прогревается).
+ *  - газ выбран, но переход не происходит дольше N минут (редуктор не прогревается);
+ *  - мало газа в баллоне (по расчёту уровня).
  */
 public final class Alerts {
 
@@ -26,7 +27,13 @@ public final class Alerts {
 
     private static final Locale RU = new Locale("ru");
 
-    public static final int LOW_PRESS = 1, FALLBACK = 2, NOT_WARMING = 3;
+    public static final int LOW_PRESS = 1, FALLBACK = 2, NOT_WARMING = 3, LOW_GAS = 4;
+
+    /** Порог «мало газа», доля баллона; сброс после заправки выше LOW_GAS_RESET. */
+    public static final double LOW_GAS_FRAC = 0.15, LOW_GAS_RESET = 0.25;
+    private static final long LOW_GAS_SHOW = 20000;
+    private boolean lowGasAlerted;
+    private Alert lowGas;
 
     private static final long LOW_PRESS_DELAY = 2000;
     private static final long FALLBACK_SHOW = 20000;
@@ -130,6 +137,24 @@ public final class Alerts {
         return fresh;
     }
 
+    /**
+     * Уровень газа (вызывать раз в кадр или реже).
+     * @return новое предупреждение «мало газа» или null
+     */
+    public Alert onGasLevel(double frac, double liters, double rangeKm, long now) {
+        if (lowGas != null && now - lowGas.since > LOW_GAS_SHOW) lowGas = null;
+        if (Double.isNaN(frac)) return null;
+        if (frac > LOW_GAS_RESET) { lowGasAlerted = false; lowGas = null; return null; }
+        if (!lowGasAlerted && frac < LOW_GAS_FRAC) {
+            lowGasAlerted = true;
+            String km = Double.isNaN(rangeKm) ? "" : String.format(RU, ", ≈ %.0f км", rangeKm);
+            lowGas = new Alert(LOW_GAS, String.format(RU, "Мало газа: ≈ %.1f л%s", liters, km),
+                    String.format(RU, "Газ %.0f л", liters), now);
+            return lowGas;
+        }
+        return null;
+    }
+
     private float minPress(long now) {
         float m = Float.NaN;
         for (int i = 0; i < pt.length; i++) {
@@ -146,6 +171,7 @@ public final class Alerts {
             return new Alert(LOW_PRESS, String.format(RU, "Низкое давление газа: %.2f бар", f.pressBar),
                     String.format(RU, "P %.2f!", f.pressBar), lowSince);
         if (warm != null) return warm;
+        if (lowGas != null) return lowGas;
         return null;
     }
 

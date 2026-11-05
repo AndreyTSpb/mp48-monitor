@@ -85,8 +85,8 @@ public final class Eco {
     }
 
     private String hint(Protocol.Frame f, float speedKmh) {
-        if (!onGas) return f.fuel == Protocol.FUEL_PETROL ? "на бензине"
-                : f.startDelay() ? "задержка после пуска" : "ожидание перехода на газ";
+        if (f.engineStopped()) return "двигатель заглушён";
+        if (!onGas) return f.fuel == Protocol.FUEL_PETROL ? "на бензине" : "ожидание перехода на газ";
         if (f.rpm <= ENGINE_ON_RPM) return "двигатель заглушён";
         if (f.gasMs == 0 && (f.status & Protocol.ST_CUTOFF) != 0) return "накат — расход нулевой";
         if (f.mapBar > 0.6f) return "разгон — отпустите педаль для экономии";
