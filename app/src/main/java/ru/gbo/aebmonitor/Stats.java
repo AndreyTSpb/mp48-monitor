@@ -1,19 +1,29 @@
 package ru.gbo.aebmonitor;
 
-import android.content.SharedPreferences;
-import android.location.Location;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * Статистика: время и пробег на газу/бензине, оценка расхода газа.
+ * Статистика: время и пробег на газу/бензине, оценка расхода газа, уровень в баллоне.
  *
  * Расход оценивается по суммарному времени открытия газовых форсунок:
  *   единицы = Σ Tгаз[с] × (обороты / 120) × 4 цилиндра × dt   («секунды открытия»)
  * и калибруется по заправке: литры = k × единицы. Это оценка, не измерение.
+ *
+ * Класс не зависит от Android: хранилище счётчиков задаётся интерфейсом {@link Store},
+ * координаты приходят числами — поэтому статистика проверяется юнит-тестами на ПК.
  */
 public final class Stats {
     private static final java.util.Locale RU = new java.util.Locale("ru");
     private static final int CYL = 4;
     private static final float ENGINE_ON_RPM = 300;
+
+    /** Скорость GPS считается устаревшей через столько миллисекунд без фикса. */
+    private static final long GPS_STALE_MS = 5000;
+    /** Фиксы с точностью хуже этого не двигают одометр (но дают скорость). */
+    private static final float GPS_MAX_ACCURACY_M = 50;
+    /** Правдоподобный предел: быстрее 250 км/ч — это скачок GPS, а не движение. */
+    private static final float MAX_SPEED_KMH = 250;
 
     /** Набор счётчиков (поездка или «с заправки»). */
     public static final class Acc {
@@ -25,6 +35,12 @@ public final class Stats {
             double t = secGas + secPetrol;
             return t > 0 ? secGas / t : Double.NaN;
         }
+    }
+
+    /** Хранилище счётчиков между запусками (SharedPreferences в приложении). */
+    public interface Store {
+        float get(String key, float def);
+        void putAll(Map<String, Float> values);
     }
 
     public final Acc trip = new Acc();      // с запуска приложения
@@ -42,35 +58,39 @@ public final class Stats {
     private static final double RANGE_MIN_KM = 20;
 
     // GPS
-    public float speedKmh = Float.NaN;
+    public float speedKmh = Float.NaN;      // последняя известная скорость; NaN — нет данных или GPS потерян
     public long lastFixAt;
-    private Location lastLoc;
+    private double lastLat, lastLon;
+    private long lastFixMs;
 
     private long lastFrameAt;
     private int lastFuel = -1;
     private boolean engineOn;
     private long lastSave;
-    private final Prefs prefs;
+    private final Store store;
 
-    public Stats(Prefs prefs) {
-        this.prefs = prefs;
-        refill.secGas = prefs.getF("r_secGas");
-        refill.secPetrol = prefs.getF("r_secPetrol");
-        refill.kmGas = prefs.getF("r_kmGas");
-        refill.kmPetrol = prefs.getF("r_kmPetrol");
-        refill.units = prefs.getF("r_units");
-        k = prefs.getF("k");
-        tankLiters = prefs.getF("tankL");
-        levelBase = prefs.getF("lvlBase");
-        levelUnits = prefs.getF("lvlUnits");
-        levelInit = prefs.getF("lvlInit") > 0;
-        levelFromFull = prefs.getF("lvlFull") > 0;
-        partialLiters = prefs.getF("r_partial");
-        lastL100 = prefs.getF("lastL100");
+    public Stats(Store store) {
+        this.store = store;
+        refill.secGas = store.get("r_secGas", 0f);
+        refill.secPetrol = store.get("r_secPetrol", 0f);
+        refill.kmGas = store.get("r_kmGas", 0f);
+        refill.kmPetrol = store.get("r_kmPetrol", 0f);
+        refill.units = store.get("r_units", 0f);
+        k = store.get("k", 0f);
+        tankLiters = store.get("tankL", 0f);
+        levelBase = store.get("lvlBase", 0f);
+        levelUnits = store.get("lvlUnits", 0f);
+        levelInit = store.get("lvlInit", 0f) > 0;
+        levelFromFull = store.get("lvlFull", 0f) > 0;
+        partialLiters = store.get("r_partial", 0f);
+        lastL100 = store.get("lastL100", 0f);
     }
 
     public void onFrame(Protocol.Frame f) {
         long now = f.timeMs;
+        // GPS пропал (туннель, глушилка, эмулятор без скорости) — старое значение скорости
+        // не должно жить вечно: иначе эко-индикатор считает л/100 км по устаревшей скорости.
+        if (lastFixAt > 0 && now - lastFixAt > GPS_STALE_MS) speedKmh = Float.NaN;
         engineOn = f.rpm > ENGINE_ON_RPM;
         lastFuel = f.fuel;
         if (lastFrameAt > 0) {
@@ -91,27 +111,60 @@ public final class Stats {
         if (now - lastSave > 10000) save();
     }
 
-    public void onLocation(Location loc) {
-        if (loc == null) return;
+    /**
+     * Новый фикс GPS.
+     * <p>Скорость берётся из фикса; если приёмник её не отдаёт (частая беда автомобильных
+     * головных устройств) или отдаёт нулевую на ходу — считается по расстоянию между фиксами.
+     *
+     * @param lat        широта, °
+     * @param lon        долгота, °
+     * @param fixTimeMs  время фикса (UTC, мс)
+     * @param speedMps   скорость из фикса, м/с
+     * @param hasSpeed   приёмник сообщил скорость
+     * @param accuracyM  точность, м (0 — неизвестна)
+     */
+    public void onFix(double lat, double lon, long fixTimeMs, float speedMps, boolean hasSpeed, float accuracyM) {
         lastFixAt = System.currentTimeMillis();
-        speedKmh = loc.hasSpeed() ? loc.getSpeed() * 3.6f : Float.NaN;
-        if (loc.hasAccuracy() && loc.getAccuracy() > 50) return;
-        if (lastLoc != null) {
-            float m = lastLoc.distanceTo(loc);
-            double dt = Math.max(0.001, (loc.getTime() - lastLoc.getTime()) / 1000.0);
-            boolean plausible = m / dt < 70;               // < 250 км/ч
-            boolean moving = m > 2 || (loc.hasSpeed() && loc.getSpeed() > 1);
-            if (plausible && moving && engineOn && lastFuel >= 0) {
-                double km = m / 1000.0;
+        double dist = Double.NaN, dt = 0;
+        if (lastFixMs > 0) {
+            dist = distanceM(lastLat, lastLon, lat, lon);
+            dt = (fixTimeMs - lastFixMs) / 1000.0;
+        }
+        // скорость по перемещению: отбрасываем слишком короткие и слишком длинные интервалы и скачки
+        float derived = (!Double.isNaN(dist) && dt > 0.2 && dt < 10 && dist / dt * 3.6 < MAX_SPEED_KMH)
+                ? (float) (dist / dt * 3.6) : Float.NaN;
+        float spd = hasSpeed ? Math.max(0f, speedMps * 3.6f) : Float.NaN;
+        if (Float.isNaN(spd) || (spd < 1f && derived > 3f)) spd = derived;   // 0 от приёмника на ходу — не верим
+        speedKmh = spd;
+
+        if (accuracyM > GPS_MAX_ACCURACY_M) return;      // координату не запоминаем, одометр не двигаем
+
+        if (!Double.isNaN(dist) && engineOn && lastFuel >= 0) {
+            boolean plausible = dist / dt < 70;                            // < 250 км/ч
+            boolean moving = dist > 2 || (!Float.isNaN(spd) && spd > 1);
+            if (plausible && moving) {
+                double km = dist / 1000.0;
                 if (lastFuel == Protocol.FUEL_GAS) { trip.kmGas += km; refill.kmGas += km; }
                 else { trip.kmPetrol += km; refill.kmPetrol += km; }
             }
         }
-        lastLoc = loc;
+        lastLat = lat;
+        lastLon = lon;
+        lastFixMs = fixTimeMs;
+    }
+
+    /** Расстояние по дуге большого круга, м (сфера; расхождение с WGS84 на поездке < 0,5 %). */
+    static double distanceM(double lat1, double lon1, double lat2, double lon2) {
+        final double r = 6371000.0;
+        double p1 = Math.toRadians(lat1), p2 = Math.toRadians(lat2);
+        double dp = p2 - p1, dl = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dp / 2) * Math.sin(dp / 2)
+                + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+        return 2 * r * Math.asin(Math.min(1.0, Math.sqrt(a)));
     }
 
     public boolean gpsFresh() {
-        return System.currentTimeMillis() - lastFixAt < 5000;
+        return System.currentTimeMillis() - lastFixAt < GPS_STALE_MS;
     }
 
     /** Литры газа с заправки (оценка) или NaN. */
@@ -177,12 +230,18 @@ public final class Stats {
 
     /**
      * Задать полезный объём баллона. Если уровень ещё ни разу не привязывался к заправке,
-     * считаем, что последняя отмеченная заправка была до полного.
+     * считаем, что последняя отмеченная заправка была до полного, а доливки после неё — учтёнными.
      */
     public void setTank(double liters) {
         tankLiters = Math.max(0, liters);
         if (tankLiters > 0 && (!levelInit || levelFromFull)) {
-            if (!levelInit) levelUnits = refill.units;   // с последней отмеченной полной заправки
+            if (!levelInit) {
+                // С момента последней полной заправки сожжено k × units литров, но доливки
+                // добавили partialLiters — на них расход меньше.
+                double burned = refill.units;
+                if (k > 0) burned -= partialLiters / k;
+                levelUnits = Math.max(0, burned);
+            }
             levelBase = tankLiters;
             levelInit = true;
             levelFromFull = true;
@@ -224,20 +283,20 @@ public final class Stats {
 
     public void save() {
         lastSave = System.currentTimeMillis();
-        SharedPreferences.Editor e = prefs.edit();
-        prefs.putF(e, "r_secGas", refill.secGas);
-        prefs.putF(e, "r_secPetrol", refill.secPetrol);
-        prefs.putF(e, "r_kmGas", refill.kmGas);
-        prefs.putF(e, "r_kmPetrol", refill.kmPetrol);
-        prefs.putF(e, "r_units", refill.units);
-        prefs.putF(e, "k", k);
-        prefs.putF(e, "tankL", tankLiters);
-        prefs.putF(e, "lvlBase", levelBase);
-        prefs.putF(e, "lvlUnits", levelUnits);
-        prefs.putF(e, "lvlInit", levelInit ? 1 : 0);
-        prefs.putF(e, "lvlFull", levelFromFull ? 1 : 0);
-        prefs.putF(e, "r_partial", partialLiters);
-        prefs.putF(e, "lastL100", lastL100);
-        e.apply();
+        Map<String, Float> v = new LinkedHashMap<>();
+        v.put("r_secGas", (float) refill.secGas);
+        v.put("r_secPetrol", (float) refill.secPetrol);
+        v.put("r_kmGas", (float) refill.kmGas);
+        v.put("r_kmPetrol", (float) refill.kmPetrol);
+        v.put("r_units", (float) refill.units);
+        v.put("k", (float) k);
+        v.put("tankL", (float) tankLiters);
+        v.put("lvlBase", (float) levelBase);
+        v.put("lvlUnits", (float) levelUnits);
+        v.put("lvlInit", levelInit ? 1f : 0f);
+        v.put("lvlFull", levelFromFull ? 1f : 0f);
+        v.put("r_partial", (float) partialLiters);
+        v.put("lastL100", (float) lastL100);
+        store.putAll(v);
     }
 }

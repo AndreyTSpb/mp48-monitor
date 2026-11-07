@@ -28,6 +28,7 @@ public final class Eco {
     public int level = LEVEL_NONE;
     public boolean moving;
     public boolean onGas;
+    public boolean speedKnown;            // GPS дал скорость (свою или по перемещению)
     public String hint = "";
     public double goodSec, gasSec;        // для эко-счёта поездки
 
@@ -35,6 +36,7 @@ public final class Eco {
         flowEma = costEma = baseline = Float.NaN;
         l100 = lh = ratio = Float.NaN;
         level = LEVEL_NONE;
+        speedKnown = false;
         goodSec = gasSec = 0;
         lastMs = 0;
     }
@@ -45,7 +47,8 @@ public final class Eco {
         lastMs = now;
         boolean running = f.rpm > ENGINE_ON_RPM;
         onGas = f.fuel == Protocol.FUEL_GAS;
-        moving = !Float.isNaN(speedKmh) && speedKmh >= MIN_SPEED;
+        speedKnown = !Float.isNaN(speedKmh);
+        moving = speedKnown && speedKmh >= MIN_SPEED;
 
         // мгновенный поток топлива (units/s): на газу — по времени газа, иначе по бензину
         float inj = onGas ? f.gasMs : f.benzMs;
@@ -88,6 +91,7 @@ public final class Eco {
         if (f.engineStopped()) return "двигатель заглушён";
         if (!onGas) return f.fuel == Protocol.FUEL_PETROL ? "на бензине" : "ожидание перехода на газ";
         if (f.rpm <= ENGINE_ON_RPM) return "двигатель заглушён";
+        if (!speedKnown) return "нет скорости GPS — подождите спутники";
         if (f.gasMs == 0 && (f.status & Protocol.ST_CUTOFF) != 0) return "накат — расход нулевой";
         if (f.mapBar > 0.6f) return "разгон — отпустите педаль для экономии";
         if (f.rpm > 2500 && f.mapBar < 0.5f) return "высокие обороты — передачу выше";

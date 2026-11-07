@@ -3,8 +3,10 @@ package ru.gbo.aebmonitor;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.Map;
+
 /** Настройки приложения (SharedPreferences). */
-public final class Prefs {
+public final class Prefs implements Stats.Store {
     private final SharedPreferences sp;
 
     public Prefs(Context c) {
@@ -50,8 +52,14 @@ public final class Prefs {
     public void setTrendWindowSec(int s) { sp.edit().putInt("trendWindow", s).apply(); }
     public void setLocationAsked() { sp.edit().putBoolean("locationAsked", true).apply(); }
 
-    // --- накопители статистики (переживают перезапуск) ---
-    public float getF(String k) { return sp.getFloat(k, 0f); }
-    public void putF(SharedPreferences.Editor e, String k, double v) { e.putFloat(k, (float) v); }
-    public SharedPreferences.Editor edit() { return sp.edit(); }
+    // --- накопители статистики (переживают перезапуск): Stats.Store ---
+    @Override
+    public float get(String key, float def) { return sp.getFloat(key, def); }
+
+    @Override
+    public void putAll(Map<String, Float> values) {
+        SharedPreferences.Editor e = sp.edit();
+        for (Map.Entry<String, Float> v : values.entrySet()) e.putFloat(v.getKey(), v.getValue());
+        e.apply();
+    }
 }

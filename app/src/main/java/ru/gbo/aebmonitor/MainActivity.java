@@ -255,7 +255,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             svc.connect(d);
         } else if (!permissionAsked) {
             permissionAsked = true;
-            dash.setLink(AebLink.ST_OPENING, "Разрешите доступ к USB");
+            dash.setLink(LinkState.OPENING, "Разрешите доступ к USB");
             Intent pi = new Intent(ACTION_PERMISSION);
             pi.setPackage(getPackageName());
             int flags = Build.VERSION.SDK_INT >= 31 ? 0x02000000 /* FLAG_MUTABLE */ : 0;
@@ -272,7 +272,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                 if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && d != null) {
                     if (svc != null) svc.connect(d); else pendingDevice = d;
                 } else {
-                    dash.setLink(AebLink.ST_ERROR, "Доступ к USB не разрешён — Меню → Переподключить");
+                    dash.setLink(LinkState.ERROR, "Доступ к USB не разрешён — Меню → Переподключить");
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(a)) {
                 permissionAsked = false;
@@ -286,9 +286,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     @Override
     public void onLinkState(int state, String text) {
         dash.setLink(state, text);
-        if (state != AebLink.ST_ONLINE) {
+        if (state != LinkState.ONLINE) {
             fuelBusy = false;
-            if (state == AebLink.ST_CLOSED) lastFuel = -1;
+            if (state == LinkState.CLOSED) lastFuel = -1;
             updateFuelButton();
         }
     }
@@ -323,6 +323,11 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     public void onLogState(boolean on, String where) {
         styleButton(btnLog, on);
         dash.setLogging(on);
+    }
+
+    @Override
+    public void onMessage(String text) {
+        toast(text);
     }
 
     @Override

@@ -39,6 +39,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
         void onFuelResult(boolean ok, String text);
         void onAlert(Alerts.Alert a);
         void onLogState(boolean on, String where);
+        void onMessage(String text);
         void onQuit();
         void onMap(KMap map, String error);
     }
@@ -73,7 +74,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private boolean gpsOn;
 
     private Protocol.Frame last;
-    private int linkState = AebLink.ST_CLOSED;
+    private int linkState = LinkState.CLOSED;
     private String linkText = "Кабель не подключён";
     private Alerts.Alert alert;
     private KMap kmap;
@@ -166,7 +167,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     private String notifText() {
         if (demo) return "Демо-режим";
-        if (last != null && linkState == AebLink.ST_ONLINE) {
+        if (last != null && linkState == LinkState.ONLINE) {
             String fuel = last.engineStopped() ? "двигатель заглушён" : last.fuel == Protocol.FUEL_GAS ? "газ" : last.fuel == Protocol.FUEL_GAS_WAIT ? "ожидание газа" : "бензин";
             return linkText + " · " + fuel + (logger.isOpen() ? " · запись" : "");
         }
@@ -230,7 +231,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
             link = null;
             linkDevice = null;
         }
-        setLink(AebLink.ST_CLOSED, "Кабель не подключён");
+        setLink(LinkState.CLOSED, "Кабель не подключён");
         alerts.reset();
         alert = null;
     }
@@ -241,7 +242,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
             UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
             if (d != null && linkDevice != null && d.getDeviceName().equals(linkDevice.getDeviceName())) {
                 stopLink();
-                setLink(AebLink.ST_CLOSED, "Кабель отключён");
+                setLink(LinkState.CLOSED, "Кабель отключён");
                 if (logger.isOpen()) stopLog();
                 if (ui == null && !demo) quit();          // окно закрыто — служба не нужна
             }
@@ -262,7 +263,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public void onLinkState(AebLink src, int state, String text) {
         if (src != link || demo) return;
         setLink(state, text);
-        if (state == AebLink.ST_ERROR) {
+        if (state == LinkState.ERROR) {
             final UsbDevice d = linkDevice;
             link = null;
             linkDevice = null;
@@ -320,6 +321,11 @@ public final class MonitorService extends Service implements AebLink.Listener {
         eco.onFrame(f, stats.speedKmh, stats.k);
         double gasL = stats.gasLeft(), rangeKm = stats.rangeKm();
         logger.write(f, stats.speedKmh, eco, gasL, rangeKm);
+        String logError = logger.takeFailure();
+        if (logError != null) {
+            stopLog();                                   // обновит кнопку записи
+            if (ui != null) ui.onMessage("Запись остановлена: " + logError);
+        }
         Alerts.Alert fresh = alerts.onFrame(f);
         Alerts.Alert gasAlert = real ? alerts.onGasLevel(stats.gasLeftFrac(), gasL, rangeKm, f.timeMs) : null;
         if (fresh == null) fresh = gasAlert;
@@ -429,7 +435,11 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public boolean gpsEnabled() { return gpsOn; }
 
     private final LocationListener gpsListener = new LocationListener() {
-        @Override public void onLocationChanged(Location location) { stats.onLocation(location); }
+        @Override public void onLocationChanged(Location l) {
+            if (l == null) return;
+            stats.onFix(l.getLatitude(), l.getLongitude(), l.getTime(),
+                    l.getSpeed(), l.hasSpeed(), l.hasAccuracy() ? l.getAccuracy() : 0f);
+        }
         @Override public void onStatusChanged(String p, int s, Bundle b) { }
         @Override public void onProviderEnabled(String p) { }
         @Override public void onProviderDisabled(String p) { }
@@ -446,7 +456,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
             demo = true;
             demoT0 = System.currentTimeMillis();
             trend.clear();
-            setLink(AebLink.ST_ONLINE, "Демо-режим");
+            setLink(LinkState.ONLINE, "Демо-режим");
             kmap = KMap.demo();
             mapError = null;
             if (ui != null) ui.onMap(kmap, null);
@@ -460,7 +470,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
             trend.clear();
             kmap = null;
             if (ui != null) ui.onMap(null, null);
-            setLink(AebLink.ST_CLOSED, "Кабель не подключён");
+            setLink(LinkState.CLOSED, "Кабель не подключён");
         }
         updateOverlay();
     }

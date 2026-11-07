@@ -66,7 +66,7 @@ public final class OverlayPanel {
     public void update(Protocol.Frame f, int linkState, Alerts.Alert alert, boolean demo) {
         if (view == null) return;
         view.f = f;
-        view.online = linkState == AebLink.ST_ONLINE;
+        view.online = linkState == LinkState.ONLINE;
         view.alert = alert;
         view.demo = demo;
         view.invalidate();

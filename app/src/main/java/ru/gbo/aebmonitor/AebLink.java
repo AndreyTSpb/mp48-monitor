@@ -22,8 +22,6 @@ public final class AebLink extends Thread {
         void onMap(AebLink src, KMap map, String error);
     }
 
-    public static final int ST_OPENING = 0, ST_NO_ECU = 1, ST_ONLINE = 2, ST_ERROR = 3, ST_CLOSED = 4;
-
     private static final int BAUD = 9600;
     private static final long POLL_MS = 100;       // 10 запросов в секунду
     private static final int REPLY_TIMEOUT = 350;
@@ -69,17 +67,17 @@ public final class AebLink extends Thread {
     public void run() {
         Pl2303 port = new Pl2303(device);
         try {
-            state(ST_OPENING, "Открываю порт…");
+            state(LinkState.OPENING, "Открываю порт…");
             port.open(mgr, BAUD);
             while (running) {
                 // Проверка связи
                 if (!handshake(port)) {
-                    state(ST_NO_ECU, "Блок не отвечает — зажигание включено?");
+                    state(LinkState.NO_ECU, "Блок не отвечает — зажигание включено?");
                     sleepMs(1000);
                     continue;
                 }
                 xfer(port, Protocol.CMD_SESSION);   // как Pride; результат не важен
-                state(ST_ONLINE, "Связь есть");
+                state(LinkState.ONLINE, "Связь есть");
                 int errors = 0;
                 while (running && errors < 10) {
                     if (mapRequest) {
@@ -100,12 +98,12 @@ public final class AebLink extends Thread {
             // Аккуратное завершение сеанса, как в Pride
             try { xfer(port, Protocol.CMD_END); } catch (IOException ignored) { }
         } catch (IOException e) {
-            if (running) state(ST_ERROR, "Ошибка: " + e.getMessage());
+            if (running) state(LinkState.ERROR, "Ошибка: " + e.getMessage());
         } catch (RuntimeException e) {
-            if (running) state(ST_ERROR, "Сбой: " + e);
+            if (running) state(LinkState.ERROR, "Сбой: " + e);
         } finally {
             port.close();
-            if (!running) state(ST_CLOSED, "Отключено");
+            if (!running) state(LinkState.CLOSED, "Отключено");
         }
     }
 

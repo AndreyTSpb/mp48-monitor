@@ -37,7 +37,7 @@ public final class DashView extends View {
 
     private Protocol.Frame frame;
     private long frameAt;
-    private int linkState = AebLink.ST_CLOSED;
+    private int linkState = LinkState.CLOSED;
     private String linkText = "Кабель не подключён";
     private float fps;
     private boolean raw;
@@ -325,9 +325,9 @@ public final class DashView extends View {
         text.setTextSize(h * 0.30f);
         int lc;
         switch (linkState) {
-            case AebLink.ST_ONLINE: lc = GAS; break;
-            case AebLink.ST_OPENING: lc = WAIT; break;
-            case AebLink.ST_NO_ECU: case AebLink.ST_ERROR: lc = ALERT; break;
+            case LinkState.ONLINE: lc = GAS; break;
+            case LinkState.OPENING: lc = WAIT; break;
+            case LinkState.NO_ECU: case LinkState.ERROR: lc = ALERT; break;
             default: lc = LABEL;
         }
         String l1 = demo ? "ДЕМО-РЕЖИМ" : linkText;
@@ -342,7 +342,7 @@ public final class DashView extends View {
         text.setTextSize(h * 0.26f);
         text.setColor(LABEL);
         StringBuilder sb = new StringBuilder();
-        if (frame != null && (linkState == AebLink.ST_ONLINE || demo)) {
+        if (frame != null && (linkState == LinkState.ONLINE || demo)) {
             sb.append(String.format(ru, "%.0f кадр/с", fps));
         }
         float l2w = text.measureText(sb.toString());

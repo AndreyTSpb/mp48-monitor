@@ -12,6 +12,7 @@ captures/
 
 # упрощённая сборка
 build-nogradle/
+tools/render/out/
 *.apk
 *.aab
 *.dex
