@@ -52,7 +52,8 @@ public final class EcoView extends View {
         if (eco != null && fresh && hasK && !Float.isNaN(eco.l100)) {
             bigValue(c, w / 2f, cy, u, String.format(ru, "%.1f", eco.l100), "л/100 км", Theme.VALUE);
         } else if (eco != null && fresh && hasK && !Float.isNaN(eco.lh)) {
-            bigValue(c, w / 2f, cy, u, String.format(ru, "%.1f", eco.lh), "л/ч · стоянка", Theme.VALUE);
+            bigValue(c, w / 2f, cy, u, String.format(ru, "%.1f", eco.lh),
+                    eco.moving ? "л/ч" : "л/ч · стоянка", Theme.VALUE);
         } else {
             String word;
             if (level == Eco.LEVEL_GOOD) word = "ЭКОНОМНО";

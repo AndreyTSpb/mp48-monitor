@@ -18,6 +18,11 @@ public final class CsvFormat {
 
     public static final int COLUMNS = 18;
 
+    /** Первая строка файла — как в txt-логе штатной программы. */
+    public static String title(String stamp) {
+        return "ГБО Монитор, запись " + stamp;
+    }
+
     /**
      * Строка кадра без перевода строки.
      *

@@ -200,6 +200,13 @@ public final class Protocol {
     /** Тик времени впрыска 2,56 мкс: 390,625 тика = 1 мс. */
     private static final float TICKS_PER_MS = 390.625f;
 
+    /**
+     * Постоянное смещение времени газа: мёртвое время форсунки (~1,0 мс по настройкам блока)
+     * плюс добавка блока (~0,5 мс). Топливо течёт только за вычетом этого смещения.
+     * Оценка по записям 06.11.2026: Tгаз = 1,5…1,8 мс + B·Tб.
+     */
+    public static final float GAS_DEAD_MS = 1.5f;
+
     public static Frame decode(byte[] d, long timeMs) {
         if (d == null || d.length < REALTIME_LEN) return null;
         Frame f = new Frame();

@@ -24,6 +24,12 @@ public final class Stats {
     private static final float GPS_MAX_ACCURACY_M = 50;
     /** Правдоподобный предел: быстрее 250 км/ч — это скачок GPS, а не движение. */
     private static final float MAX_SPEED_KMH = 250;
+    /** Стоянка: смещение за окно GPS меньше этого радиуса — машина стоит. */
+    private static final double STILL_RADIUS_M = 4.0;
+    private static final long STILL_MIN_MS = 4500, STILL_MAX_MS = 8000;
+    /** Ниже этой скорости одометр не считает (шум приёмника на стоянке). */
+    private static final float ODO_MIN_KMH = 2f;
+    private static final int HIST = 16;
 
     /** Набор счётчиков (поездка или «с заправки»). */
     public static final class Acc {
@@ -62,6 +68,11 @@ public final class Stats {
     public long lastFixAt;
     private double lastLat, lastLon;
     private long lastFixMs;
+    // история фиксов для детектора стоянки: смещение за ~5 с
+    private final double[] histLat = new double[HIST];
+    private final double[] histLon = new double[HIST];
+    private final long[] histMs = new long[HIST];
+    private int histHead, histCount;
 
     private long lastFrameAt;
     private int lastFuel = -1;
@@ -100,7 +111,9 @@ public final class Stats {
                 if (gas) { trip.secGas += dt; refill.secGas += dt; }
                 else { trip.secPetrol += dt; refill.secPetrol += dt; }
                 if (gas && f.gasMs > 0) {
-                    double u = (f.gasMs / 1000.0) * (f.rpm / 120.0) * CYL * dt;
+                    // полезное время открытия: без мёртвого времени форсунки
+                    double openMs = Math.max(0f, f.gasMs - Protocol.GAS_DEAD_MS);
+                    double u = (openMs / 1000.0) * (f.rpm / 120.0) * CYL * dt;
                     trip.units += u;
                     refill.units += u;
                     levelUnits += u;
@@ -135,22 +148,51 @@ public final class Stats {
                 ? (float) (dist / dt * 3.6) : Float.NaN;
         float spd = hasSpeed ? Math.max(0f, speedMps * 3.6f) : Float.NaN;
         if (Float.isNaN(spd) || (spd < 1f && derived > 3f)) spd = derived;   // 0 от приёмника на ходу — не верим
-        speedKmh = spd;
+
+        // Стоянка определяется не мгновенной скоростью (на стоянке приёмник даёт всплески
+        // 5–7 км/ч), а смещением за окно ~5 с: стоим — скорость ноль, одометр не двигается.
+        boolean still = isStill(lat, lon, fixTimeMs);
+        speedKmh = still ? 0f : spd;
 
         if (accuracyM > GPS_MAX_ACCURACY_M) return;      // координату не запоминаем, одометр не двигаем
 
-        if (!Double.isNaN(dist) && engineOn && lastFuel >= 0) {
-            boolean plausible = dist / dt < 70;                            // < 250 км/ч
-            boolean moving = dist > 2 || (!Float.isNaN(spd) && spd > 1);
-            if (plausible && moving) {
-                double km = dist / 1000.0;
-                if (lastFuel == Protocol.FUEL_GAS) { trip.kmGas += km; refill.kmGas += km; }
-                else { trip.kmPetrol += km; refill.kmPetrol += km; }
-            }
+        boolean jump = !Double.isNaN(dist) && dt > 0.2 && dt <= 10 && dist / dt * 3.6 >= MAX_SPEED_KMH;
+        if (jump) histCount = 0;                        // скачок GPS — окно стоянки начинаем заново
+
+        if (!jump && !still && engineOn && lastFuel >= 0
+                && !Float.isNaN(spd) && spd >= ODO_MIN_KMH && dt > 0) {
+            double dtFix = Math.min(dt, 5.0);
+            double km = spd * dtFix / 3600.0;           // по скорости, а не по дрожащей координате
+            if (lastFuel == Protocol.FUEL_GAS) { trip.kmGas += km; refill.kmGas += km; }
+            else { trip.kmPetrol += km; refill.kmPetrol += km; }
         }
+
+        remember(lat, lon, fixTimeMs);
         lastLat = lat;
         lastLon = lon;
         lastFixMs = fixTimeMs;
+    }
+
+    /** Машина стоит, если точка сместилась меньше чем на 4 м за ~5 с (окно 4,5…8 с). */
+    private boolean isStill(double lat, double lon, long nowMs) {
+        if (histCount < 2) return false;
+        for (int i = 0; i < histCount; i++) {
+            int idx = (histHead - 1 - i + HIST) % HIST;
+            long age = nowMs - histMs[idx];
+            if (age > STILL_MAX_MS) break;
+            if (age >= STILL_MIN_MS) {
+                return distanceM(histLat[idx], histLon[idx], lat, lon) < STILL_RADIUS_M;
+            }
+        }
+        return false;
+    }
+
+    private void remember(double lat, double lon, long ms) {
+        histLat[histHead] = lat;
+        histLon[histHead] = lon;
+        histMs[histHead] = ms;
+        histHead = (histHead + 1) % HIST;
+        if (histCount < HIST) histCount++;
     }
 
     /** Расстояние по дуге большого круга, м (сфера; расхождение с WGS84 на поездке < 0,5 %). */

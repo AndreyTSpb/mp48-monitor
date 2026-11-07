@@ -17,8 +17,8 @@ android {
         applicationId 'ru.gbo.aebmonitor'
         minSdk 21
         targetSdk 30          // сознательно: Android 11 магнитолы, без ограничений новых версий
-        versionCode 13
-        versionName '1.11'
+        versionCode 15
+        versionName '1.12'
     }
 
     signingConfigs {

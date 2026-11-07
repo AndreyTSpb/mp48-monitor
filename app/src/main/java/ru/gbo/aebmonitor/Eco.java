@@ -11,6 +11,7 @@ public final class Eco {
     private static final int CYL = 4;
     private static final float ENGINE_ON_RPM = 300;
     private static final float MIN_SPEED = 5f;        // ниже — считаем стоянкой
+    private static final float MIN_SPEED_L100 = 8f;   // ниже — л/ч понятнее, чем л/100
     private static final float FLOW_TAU = 3f;         // сглаживание потока, с
     private static final float BASE_TAU = 120f;       // базовая линия стоимости, с
 
@@ -50,15 +51,17 @@ public final class Eco {
         speedKnown = !Float.isNaN(speedKmh);
         moving = speedKnown && speedKmh >= MIN_SPEED;
 
-        // мгновенный поток топлива (units/s): на газу — по времени газа, иначе по бензину
-        float inj = onGas ? f.gasMs : f.benzMs;
+        // мгновенный поток топлива (units/s): на газу — по полезному времени газа, иначе по бензину
+        float inj = onGas ? Math.max(0f, f.gasMs - Protocol.GAS_DEAD_MS) : f.benzMs;
         float flow = (running && inj > 0 && !f.isTransient()) ? inj / 1000f * (f.rpm / 120f) * CYL : 0f;
         flowEma = ema(flowEma, flow, dt, FLOW_TAU);
 
         // абсолютный расход при калибровке
         if (k > 0 && onGas && flowEma > 0) {
             lh = (float) (k * flowEma * 3600);
-            l100 = moving ? (float) (k * flowEma / (speedKmh / 3600f) * 100) : Float.NaN;
+            // На малой скорости л/100 км — это шум (поток/скорость), водителю полезнее л/ч.
+            l100 = (moving && speedKmh >= MIN_SPEED_L100)
+                    ? (float) (k * flowEma / (speedKmh / 3600f) * 100) : Float.NaN;
         } else {
             lh = l100 = Float.NaN;
         }

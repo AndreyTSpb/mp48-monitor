@@ -38,7 +38,7 @@ public class StatsTest {
         return f;
     }
 
-    /** Кадры на газу: rpm 2400, Tгаз 4 мс → 0,32 «секунды открытия» в секунду. */
+    /** Кадры на газу: rpm 2400, Tгаз 4 мс → полезное 2,5 мс → 0,2 «секунды открытия» в секунду. */
     private static void drive(Stats s, long fromMs, double seconds) {
         int n = (int) Math.round(seconds * 10);
         for (int i = 0; i <= n; i++) s.onFrame(frame(fromMs + i * 100L, Protocol.FUEL_GAS, 2400, 4f));
@@ -58,7 +58,7 @@ public class StatsTest {
         Stats s = new Stats(new Mem());
         drive(s, T0, 1.0);
         assertEquals(1.0, s.trip.secGas, 1e-6);
-        assertEquals(0.32, s.trip.units, 1e-6);
+        assertEquals(0.2, s.trip.units, 1e-6);
         assertEquals(1.0, s.trip.gasShare(), 1e-6);
     }
 
@@ -71,12 +71,20 @@ public class StatsTest {
     }
 
     @Test
+    public void gasAtDeadTimeAddsNothing() {
+        Stats s = new Stats(new Mem());
+        for (int i = 0; i <= 10; i++) s.onFrame(frame(T0 + i * 100L, Protocol.FUEL_GAS, 2400, 1.2f));
+        assertEquals(0, s.trip.units, 1e-12);        // короче мёртвого времени — топлива нет
+        assertEquals(1.0, s.trip.secGas, 1e-6);      // но время на газу идёт
+    }
+
+    @Test
     public void fullRefillCalibratesK() {
         Stats s = new Stats(new Mem());
-        drive(s, T0, 60);                     // 60 × 0,32 = 19,2 единицы
+        drive(s, T0, 60);                     // 60 × 0,2 = 12 единиц
         String msg = s.onRefill(10, true);
         assertTrue(msg.startsWith("Калибровка обновлена"));
-        assertEquals(10 / 19.2, s.k, 1e-6);
+        assertEquals(10 / 12.0, s.k, 1e-6);
         assertEquals(0, s.refill.units, 1e-9);       // счётчик с заправки начат заново
         assertEquals(0, s.litersSinceRefill(), 1e-9);
     }
@@ -107,10 +115,10 @@ public class StatsTest {
     public void per100UsesCalibratedUnitsAndDistance() {
         Stats s = new Stats(new Mem());
         s.k = 0.5;                                  // 0,5 л на единицу
-        drive(s, T0, 10);                           // 3,2 единицы = 1,6 л
+        drive(s, T0, 10);                           // 2 единицы = 1 л
         driveKm(s, 50);                             // 10 км
         assertEquals(10.0, s.trip.kmGas, 1e-3);
-        assertEquals(16.0, s.per100(s.trip), 1e-3); // 1,6 л на 10 км
+        assertEquals(10.0, s.per100(s.trip), 1e-3); // 1 л на 10 км
     }
 
     @Test
@@ -121,9 +129,9 @@ public class StatsTest {
         assertEquals(40.0, s.gasLeft(), 1e-6);
         assertEquals(1.0, s.gasLeftFrac(), 1e-6);
 
-        drive(s, T0, 12.5);                         // 4 единицы = 2 л
-        assertEquals(38.0, s.gasLeft(), 1e-6);
-        assertEquals(0.95, s.gasLeftFrac(), 1e-6);
+        drive(s, T0, 12.5);                         // 2,5 единицы = 1,25 л
+        assertEquals(38.75, s.gasLeft(), 1e-6);
+        assertEquals(0.96875, s.gasLeftFrac(), 1e-6);
     }
 
     @Test
@@ -131,10 +139,10 @@ public class StatsTest {
         Stats s = new Stats(new Mem());
         s.k = 0.5;
         s.setTank(40);
-        drive(s, T0, 25);                           // 8 единиц = 4 л → 36 л
-        assertEquals(36.0, s.gasLeft(), 1e-6);
+        drive(s, T0, 25);                           // 5 единиц = 2,5 л → 37,5 л
+        assertEquals(37.5, s.gasLeft(), 1e-6);
         assertTrue(s.onRefill(2, false).startsWith("Доливка"));
-        assertEquals(38.0, s.gasLeft(), 1e-6);
+        assertEquals(39.5, s.gasLeft(), 1e-6);
         assertEquals(0.5, s.k, 1e-6);               // калибровка доливкой не меняется
     }
 
@@ -142,12 +150,12 @@ public class StatsTest {
     public void partialRefillBeforeTankKnownIsNotLost() {
         Stats s = new Stats(new Mem());
         s.k = 0.5;
-        drive(s, T0, 25);                           // 4 л сожжено (8 единиц)
+        drive(s, T0, 25);                           // 2,5 л сожжено (5 единиц)
         s.onRefill(2, false);                       // доливка при неизвестном объёме
         assertEquals(0, s.tankLiters, 1e-9);
         s.setTank(40);                              // объём задан позже
-        // 40 − 4 л сожжено + 2 л долито = 38
-        assertEquals(38.0, s.gasLeft(), 1e-6);
+        // 40 − 2,5 л сожжено + 2 л долито = 39,5
+        assertEquals(39.5, s.gasLeft(), 1e-6);
     }
 
     @Test
@@ -198,6 +206,50 @@ public class StatsTest {
     }
 
     @Test
+    public void standstillJitterDoesNotMoveOrShowSpeed() {
+        Stats s = new Stats(new Mem());
+        drive(s, T0, 0.5);                          // двигатель работает, газ
+        double lat = 59.94;
+        long t = T0 + 1000;
+        double[] off = {0, 1.2, -0.8, 0.9, -1.1, 0.6, -0.7, 1.3, -1.2, 0.5};
+        for (int i = 0; i < 25; i++) {              // 25 с дрожания вокруг точки
+            s.onFix(lat + off[i % off.length] / M_PER_DEG, 30.0, t, 0.3f, true, 5f);
+            t += 1000;
+        }
+        assertEquals(0f, s.speedKmh, 0.001f);
+        assertTrue(s.trip.kmGas < 0.002);
+    }
+
+    @Test
+    public void standstillIgnoresReceiverSpeedBursts() {
+        Stats s = new Stats(new Mem());
+        drive(s, T0, 0.5);
+        long t = T0 + 1000;
+        for (int i = 0; i < 20; i++) {
+            float kmh = (i >= 8 && i < 13) ? 5.6f : 0.4f;   // всплески приёмника на стоянке
+            s.onFix(59.94, 30.0, t, kmh / 3.6f, true, 5f);
+            t += 1000;
+        }
+        assertEquals(0f, s.speedKmh, 0.001f);
+        assertEquals(0, s.trip.kmGas, 1e-6);
+    }
+
+    @Test
+    public void slowCreepIsCounted() {
+        Stats s = new Stats(new Mem());
+        drive(s, T0, 0.5);
+        long t = T0 + 1000;
+        double lat = 59.94;
+        for (int i = 0; i < 20; i++) {              // 1 м/с = 3,6 км/ч
+            s.onFix(lat, 30.0, t, 1.0f, true, 5f);
+            lat += 1.0 / M_PER_DEG;
+            t += 1000;
+        }
+        assertEquals(0.02, s.trip.kmGas, 0.003);
+        assertEquals(3.6, s.speedKmh, 0.2);
+    }
+
+    @Test
     public void countersSurviveRestart() {
         Mem mem = new Mem();
         Stats s = new Stats(mem);
@@ -209,7 +261,7 @@ public class StatsTest {
         Stats again = new Stats(mem);
         assertEquals(0.5, again.k, 1e-6);
         assertEquals(40.0, again.tankLiters, 1e-6);
-        assertEquals(38.0, again.gasLeft(), 1e-4);
-        assertEquals(0.95, again.gasLeftFrac(), 1e-4);
+        assertEquals(38.75, again.gasLeft(), 1e-4);
+        assertEquals(0.96875, again.gasLeftFrac(), 1e-4);
     }
 }

@@ -121,6 +121,8 @@ public final class CsvLogger {
 
         BufferedWriter w = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
         try {
+            w.write(CsvFormat.title(stamp));
+            w.write('\n');
             w.write(CsvFormat.HEADER);
             w.write('\n');
             w.flush();

@@ -24,6 +24,12 @@ public class CsvFormatTest {
     }
 
     @Test
+    public void titleLineWrittenBeforeHeader() {
+        assertEquals("ГБО Монитор, запись 2026-11-07_14-17-16",
+                CsvFormat.title("2026-11-07_14-17-16"));
+    }
+
+    @Test
     public void headerHasEighteenColumns() {
         String[] c = CsvFormat.HEADER.split("\t", -1);
         assertEquals(CsvFormat.COLUMNS, c.length);

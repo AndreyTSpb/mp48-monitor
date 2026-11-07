@@ -40,9 +40,9 @@ public class EcoTest {
     public void litersPer100AndPerHour() {
         Eco e = new Eco();
         cruise(e, 300, 72f, T0);                   // 30 с — сглаживание успевает сойтись
-        // поток = 0,005 × (2000/120) × 4 = 0,3333 ед/с; k = 0,001 л/ед
-        assertEquals(1.2, e.lh, 0.02);             // 0,3333 × 0,001 × 3600
-        assertEquals(1.667, e.l100, 0.05);         // 1,2 л/ч ÷ 72 км/ч × 100
+        // полезное время 5 − 1,5 = 3,5 мс → поток 0,0035 × (2000/120) × 4 = 0,2333 ед/с
+        assertEquals(0.84, e.lh, 0.02);            // 0,2333 × 0,001 × 3600
+        assertEquals(1.167, e.l100, 0.05);         // 0,84 л/ч ÷ 72 км/ч × 100
         assertTrue(e.moving);
         assertTrue(e.speedKnown);
         assertEquals(Eco.LEVEL_OK, e.level);
@@ -53,7 +53,7 @@ public class EcoTest {
         Eco e = new Eco();
         cruise(e, 100, 0f, T0);
         assertTrue(Float.isNaN(e.l100));
-        assertEquals(1.2, e.lh, 0.05);
+        assertEquals(0.84, e.lh, 0.05);
         assertEquals(Eco.LEVEL_NONE, e.level);
         assertEquals("стоянка", e.hint);
     }
@@ -81,6 +81,15 @@ public class EcoTest {
         assertTrue(Float.isNaN(e.l100));
         assertEquals(Eco.LEVEL_NONE, e.level);
         assertEquals("накат — расход нулевой", e.hint);
+    }
+
+    @Test
+    public void lowSpeedShowsPerHourNotPer100() {
+        Eco e = new Eco();
+        cruise(e, 200, 6f, T0);                    // 6 км/ч — ползём в пробке
+        assertTrue(e.moving);                      // для эко-шкалы это ещё движение
+        assertTrue(Float.isNaN(e.l100));           // но л/100 на такой скорости не показываем
+        assertEquals(0.84, e.lh, 0.02);
     }
 
     @Test
