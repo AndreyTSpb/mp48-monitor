@@ -26,6 +26,7 @@ import android.os.Looper;
 import android.provider.Settings;
 
 import java.io.IOException;
+import java.util.Locale;
 
 /**
  * Фоновая служба: связь с блоком, запись, статистика, предупреждения, мини-панель.
@@ -45,6 +46,9 @@ public final class MonitorService extends Service implements AebLink.Listener {
     }
 
     public static final String ACTION_QUIT = "ru.gbo.aebmonitor.QUIT";
+    /** Служба запущена после загрузки магнитолы (для лога). */
+    public static final String EXTRA_BOOT = "boot";
+    private static final String ACTION_USB_PERMISSION = "ru.gbo.aebmonitor.USB_PERMISSION_SERVICE";
     private static final String CHANNEL = "monitor";
     private static final int NOTIF_ID = 1;
 
@@ -54,6 +58,13 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     private final IBinder binder = new LocalBinder();
     private final Handler h = new Handler(Looper.getMainLooper());
+
+    private static volatile boolean running;
+
+    /** Служба сейчас работает (для плановой проверки автозапуска). */
+    public static boolean isRunning() {
+        return running;
+    }
 
     private Prefs prefs;
     private UsbManager usb;
@@ -72,6 +83,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private ToneGenerator tone;
     private LocationManager lm;
     private boolean gpsOn;
+    private boolean permissionAsked;      // разрешение на USB уже запрашивали в этой сессии
 
     private Protocol.Frame last;
     private int linkState = LinkState.CLOSED;
@@ -84,25 +96,36 @@ public final class MonitorService extends Service implements AebLink.Listener {
     private long fpsWindowStart;
     private int fpsCount;
     private float fps;
+    private long lastStatusLog;
 
     // ---------- жизненный цикл ----------
 
     @Override
     public void onCreate() {
         super.onCreate();
+        running = true;
         prefs = new Prefs(this);
+        if (prefs.debug() && !DebugLog.active()) DebugLog.start(this);
+        DebugLog.log("service", "onCreate");
         stats = new Stats(prefs);
         usb = (UsbManager) getSystemService(Context.USB_SERVICE);
         alerts.configure(prefs.lowPress(), prefs.waitMinutes());
         overlay = new OverlayPanel(this, prefs);
-        IntentFilter f = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
-        registerReceiver(detachReceiver, f);
+        IntentFilter f = new IntentFilter();
+        f.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        f.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+        f.addAction(ACTION_USB_PERMISSION);
+        registerReceiver(usbReceiver, f);
         startForegroundCompat();
         startGps();
+        h.postDelayed(autoConnectTask, 2000);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        boolean boot = intent != null && intent.getBooleanExtra(EXTRA_BOOT, false);
+        DebugLog.log("service", "onStartCommand " + (intent == null ? "null" : String.valueOf(intent.getAction()))
+                + (boot ? " (после загрузки системы)" : ""));
         if (intent != null && ACTION_QUIT.equals(intent.getAction())) {
             quit();
             return START_NOT_STICKY;
@@ -118,22 +141,29 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     @Override
     public void onDestroy() {
+        DebugLog.log("service", "onDestroy");
         stopLink();
         h.removeCallbacks(demoTick);
+        h.removeCallbacks(autoConnectTask);
         logger.stop();
         stats.save();
         overlay.hide();
         stopGps();
         if (tone != null) tone.release();
-        try { unregisterReceiver(detachReceiver); } catch (Exception ignored) { }
+        try { unregisterReceiver(usbReceiver); } catch (Exception ignored) { }
+        DebugLog.stop();
+        running = false;
         super.onDestroy();
     }
 
     /** Полный выход: всё остановить и закрыть службу. */
     public void quit() {
+        DebugLog.log("service", "quit");
+        AutoStart.cancel(this);
         stopLink();
         demo = false;
         h.removeCallbacks(demoTick);
+        h.removeCallbacks(autoConnectTask);
         logger.stop();
         overlay.hide();
         if (ui != null) {
@@ -208,6 +238,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     public void connect(UsbDevice d) {
         if (demo) return;
+        DebugLog.log("usb", "connect " + d.getDeviceName() + (usb.hasPermission(d) ? "" : " — нет разрешения"));
         if (link != null) {
             if (linkDevice != null && linkDevice.getDeviceName().equals(d.getDeviceName())) return;
             stopLink();
@@ -219,14 +250,57 @@ public final class MonitorService extends Service implements AebLink.Listener {
         if (prefs.autoLog() && !logger.isOpen()) startLog();
     }
 
+    /**
+     * Подключиться к найденному кабелю; при необходимости тихо попросить разрешение на USB.
+     * @return true, если кабель найден (или уже подключены) — повторять поиск не нужно
+     */
+    private boolean autoConnect() {
+        if (demo || link != null || usb == null) return true;
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (!Pl2303.isSupported(d)) continue;
+            if (usb.hasPermission(d)) {
+                DebugLog.log("usb", "автоподключение " + d.getDeviceName());
+                connect(d);
+            } else if (ui == null && !permissionAsked) {
+                permissionAsked = true;
+                DebugLog.log("usb", "запрос разрешения на USB");
+                try {
+                    int flags = Build.VERSION.SDK_INT >= 31 ? 0x02000000 /* FLAG_MUTABLE */ : 0;
+                    PendingIntent pi = PendingIntent.getBroadcast(this, 0,
+                            new Intent(ACTION_USB_PERMISSION).setPackage(getPackageName()), flags);
+                    usb.requestPermission(d, pi);
+                } catch (RuntimeException e) {
+                    DebugLog.log("usb", "не удалось запросить разрешение: " + e);
+                }
+            } else if (ui == null) {
+                DebugLog.log("usb", "кабель есть, разрешения нет — нужно открыть приложение");
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private int autoConnectTries;
+
+    private final Runnable autoConnectTask = new Runnable() {
+        @Override
+        public void run() {
+            // На загрузке кабель может появиться в системе не сразу — ищем до ~25 с.
+            if (autoConnect() || ++autoConnectTries >= 6) return;
+            h.postDelayed(this, 5000);
+        }
+    };
+
     public boolean isLinked() { return link != null; }
 
     public void reconnect() {
+        DebugLog.log("usb", "reconnect");
         stopLink();
     }
 
     private void stopLink() {
         if (link != null) {
+            DebugLog.log("usb", "stopLink");
             link.shutdown();
             link = null;
             linkDevice = null;
@@ -236,11 +310,26 @@ public final class MonitorService extends Service implements AebLink.Listener {
         alert = null;
     }
 
-    private final BroadcastReceiver detachReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
+            String action = i.getAction();
             UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if (ACTION_USB_PERMISSION.equals(action)) {
+                boolean granted = i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+                DebugLog.log("usb", granted ? "разрешение на USB получено" : "разрешение на USB отклонено");
+                if (granted && d != null) connect(d);
+                return;
+            }
+            if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+                permissionAsked = false;
+                autoConnectTries = 0;
+                DebugLog.log("usb", "кабель подключён " + (d == null ? "?" : d.getDeviceName()));
+                autoConnect();
+                return;
+            }
             if (d != null && linkDevice != null && d.getDeviceName().equals(linkDevice.getDeviceName())) {
+                DebugLog.log("usb", "кабель отключён");
                 stopLink();
                 setLink(LinkState.CLOSED, "Кабель отключён");
                 if (logger.isOpen()) stopLog();
@@ -250,11 +339,22 @@ public final class MonitorService extends Service implements AebLink.Listener {
     };
 
     private void setLink(int st, String text) {
+        if (st != linkState || !text.equals(linkText)) DebugLog.log("link", stateName(st) + ": " + text);
         linkState = st;
         linkText = text;
         if (ui != null) ui.onLinkState(st, text);
         overlay.update(last, linkState, alert, demo);
         refreshNotification();
+    }
+
+    private static String stateName(int state) {
+        switch (state) {
+            case LinkState.OPENING: return "открытие";
+            case LinkState.NO_ECU: return "нет блока";
+            case LinkState.ONLINE: return "связь";
+            case LinkState.ERROR: return "ошибка";
+            default: return "закрыто";
+        }
     }
 
     // ---------- AebLink.Listener (главный поток) ----------
@@ -284,6 +384,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     @Override
     public void onMap(AebLink src, KMap map, String error) {
         if (src != link || demo) return;
+        DebugLog.log("map", map != null ? "карта K прочитана" : "ошибка чтения карты: " + error);
         if (map != null || kmap == null) kmap = map;   // при ошибке оставляем прежнюю карту
         mapError = error;
         if (ui != null) ui.onMap(kmap, error);
@@ -293,6 +394,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     /** Перечитать карту K из блока. */
     public boolean reloadMap() {
+        DebugLog.log("map", "перечитать карту K");
         if (demo) { kmap = KMap.demo(); if (ui != null) ui.onMap(kmap, null); return true; }
         if (link == null) return false;
         link.requestMap();
@@ -302,6 +404,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     @Override
     public void onFuelResult(AebLink src, boolean ok, String text) {
         if (src != link) return;
+        DebugLog.log("fuel", (ok ? "ok: " : "отказ: ") + text);
         if (ui != null) ui.onFuelResult(ok, text);
     }
 
@@ -323,13 +426,17 @@ public final class MonitorService extends Service implements AebLink.Listener {
         logger.write(f, stats.speedKmh, eco, gasL, rangeKm);
         String logError = logger.takeFailure();
         if (logError != null) {
+            DebugLog.log("log", "ошибка записи: " + logError);
             stopLog();                                   // обновит кнопку записи
             if (ui != null) ui.onMessage("Запись остановлена: " + logError);
         }
         Alerts.Alert fresh = alerts.onFrame(f);
         Alerts.Alert gasAlert = real ? alerts.onGasLevel(stats.gasLeftFrac(), gasL, rangeKm, f.timeMs) : null;
         if (fresh == null) fresh = gasAlert;
-        if (fresh != null) beep(fresh.type);
+        if (fresh != null) {
+            DebugLog.log("alert", fresh.text);
+            beep(fresh.type);
+        }
         Alerts.Alert cur = alerts.current(f);
         boolean changed = (cur == null) != (alert == null) || (cur != null && cur.type != alert.type);
         alert = cur;
@@ -337,14 +444,30 @@ public final class MonitorService extends Service implements AebLink.Listener {
             ui.onFrame(f, fps);
             if (changed || cur != null) ui.onAlert(cur);
         }
+        if (real && now - lastStatusLog > 10000) {
+            lastStatusLog = now;
+            DebugLog.log("state", String.format(Locale.US,
+                    "%.0f кадр/с, %d об/мин, %s, скорость %.1f км/ч, k %.6f, газ %.2f л, запас %.0f км, запись %s",
+                    fps, f.rpm, fuelName(f.fuel), stats.speedKmh, stats.k, gasL, rangeKm,
+                    logger.isOpen() ? "да" : "нет"));
+        }
         overlay.update(f, linkState, alert, demo);
         refreshNotification();
+    }
+
+    private static String fuelName(int fuel) {
+        switch (fuel) {
+            case Protocol.FUEL_GAS: return "газ";
+            case Protocol.FUEL_GAS_WAIT: return "ожидание газа";
+            default: return "бензин";
+        }
     }
 
     // ---------- топливо ----------
 
     public boolean requestFuel(boolean gas) {
         if (link == null || demo) return false;
+        DebugLog.log("fuel", gas ? "команда: газ" : "команда: бензин");
         alerts.onCommand(System.currentTimeMillis());
         link.requestFuel(gas);
         return true;
@@ -361,10 +484,12 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public String startLog() {
         try {
             logger.start(this);
+            DebugLog.log("log", "начало записи: " + logger.where());
             if (ui != null) ui.onLogState(true, logger.where());
             refreshNotification();
             return "Пишу в " + logger.where();
         } catch (IOException e) {
+            DebugLog.log("log", "не удалось начать запись: " + e.getMessage());
             return "Не удалось начать запись: " + e.getMessage();
         }
     }
@@ -372,6 +497,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public String stopLog() {
         String w = logger.where();
         logger.stop();
+        DebugLog.log("log", "конец записи: " + w);
         if (ui != null) ui.onLogState(false, w);
         refreshNotification();
         return "Запись сохранена: " + w;
@@ -380,6 +506,8 @@ public final class MonitorService extends Service implements AebLink.Listener {
     // ---------- предупреждения ----------
 
     public void applySettings() {
+        DebugLog.log("settings", String.format(Locale.US, "давление %.2f бар, ожидание %d мин, звук %s",
+                prefs.lowPress(), prefs.waitMinutes(), prefs.sound() ? "вкл" : "выкл"));
         alerts.configure(prefs.lowPress(), prefs.waitMinutes());
         updateOverlay();
     }
@@ -415,19 +543,28 @@ public final class MonitorService extends Service implements AebLink.Listener {
     public void startGps() {
         if (gpsOn) return;
         if (Build.VERSION.SDK_INT >= 23
-                && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+                && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            DebugLog.log("gps", "нет разрешения на геолокацию");
+            return;
+        }
         try {
             lm = (LocationManager) getSystemService(LOCATION_SERVICE);
-            if (lm == null || !lm.getAllProviders().contains(LocationManager.GPS_PROVIDER)) return;
+            if (lm == null || !lm.getAllProviders().contains(LocationManager.GPS_PROVIDER)) {
+                DebugLog.log("gps", "GPS-провайдер недоступен");
+                return;
+            }
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, gpsListener, Looper.getMainLooper());
             gpsOn = true;
-        } catch (SecurityException | IllegalArgumentException ignored) {
+            DebugLog.log("gps", "GPS слушается");
+        } catch (SecurityException | IllegalArgumentException e) {
+            DebugLog.log("gps", "не удалось запустить GPS: " + e);
         }
     }
 
     private void stopGps() {
         if (lm != null && gpsOn) {
             try { lm.removeUpdates(gpsListener); } catch (SecurityException ignored) { }
+            DebugLog.log("gps", "GPS остановлен");
         }
         gpsOn = false;
     }
@@ -451,6 +588,7 @@ public final class MonitorService extends Service implements AebLink.Listener {
 
     public void setDemo(boolean on) {
         if (on == demo) return;
+        DebugLog.log("demo", on ? "включён" : "выключен");
         if (on) {
             stopLink();
             demo = true;

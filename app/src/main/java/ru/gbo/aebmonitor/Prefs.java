@@ -23,6 +23,15 @@ public final class Prefs implements Stats.Store {
     public int overlayX() { return sp.getInt("overlayX", 40); }
     public int overlayY() { return sp.getInt("overlayY", 120); }
     public boolean autoLog() { return sp.getBoolean("autoLog", false); }
+    /** Автозапуск службы при включении магнитолы. */
+    public boolean autoStart() { return sp.getBoolean("autoStart", true); }
+    public void setAutoStart(boolean on) { sp.edit().putBoolean("autoStart", on).apply(); }
+    /** Открывать окно приложения при автозапуске (по умолчанию — тихий старт). */
+    public boolean autoStartUi() { return sp.getBoolean("autoStartUi", false); }
+    public void setAutoStartUi(boolean on) { sp.edit().putBoolean("autoStartUi", on).apply(); }
+    /** Отладочный лог в «Загрузки/AEB/aeb-log-…». */
+    public boolean debug() { return sp.getBoolean("debug", false); }
+    public void setDebug(boolean on) { sp.edit().putBoolean("debug", on).apply(); }
     public int trendWindowSec() { return sp.getInt("trendWindow", 60); }
     public boolean locationAsked() { return sp.getBoolean("locationAsked", false); }
 

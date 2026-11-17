@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Prolific PL2303 (диагностический кабель блока) -->
+    <!-- Prolific PL2303 (диагностический кабель блока AEB) -->
     <usb-device vendor-id="1659" product-id="8963" />
     <usb-device vendor-id="1659" />
+
+    <!-- CH340 / CH341 (KKL для K-line ЭБУ) -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <usb-device vendor-id="6790" product-id="21795" />
 </resources>

@@ -39,6 +39,7 @@ import java.util.Locale;
 public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private static final String ACTION_PERMISSION = "ru.gbo.aebmonitor.USB_PERMISSION";
+    private static final String ACTION_KLINE_PERMISSION = "ru.gbo.aebmonitor.KLINE_PERMISSION";
     private static final int REQ_LOCATION = 10;
     private static final int PAGE_DASH = 0, PAGE_TREND = 1, PAGE_MAP = 2, PAGE_MCURVE = 3, PAGE_ECO = 4, PAGE_STATS = 5, PAGES = 6;
     private static final String[] PAGE_NAMES = {"Табло", "Графики", "Карта K", "Множитель", "Эконом", "Статистика"};
@@ -48,6 +49,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     private MonitorService svc;
     private UsbDevice pendingDevice;
     private boolean permissionAsked;
+    private KLineLink klineTest;
+    private Runnable klineStop;
+    private final android.os.Handler klineTick = new android.os.Handler();
 
     private DashView dash;
     private TrendView trendView;
@@ -137,6 +141,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
         IntentFilter f = new IntentFilter();
         f.addAction(ACTION_PERMISSION);
+        f.addAction(ACTION_KLINE_PERMISSION);
         f.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         registerReceiver(usbReceiver, f);
 
@@ -187,6 +192,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     @Override
     protected void onDestroy() {
+        stopKlineTest(null);
         try { unregisterReceiver(usbReceiver); } catch (Exception ignored) { }
         super.onDestroy();
     }
@@ -232,6 +238,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private void handleIntent(Intent i) {
         if (i != null && UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(i.getAction())) {
+            DebugLog.log("ui", "окно открыто по подключению кабеля");
             permissionAsked = false;
             UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
             if (Pl2303.isSupported(d)) {
@@ -270,11 +277,20 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
             UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
             if (ACTION_PERMISSION.equals(a)) {
                 if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && d != null) {
+                    DebugLog.log("usb", "разрешение на USB получено");
                     if (svc != null) svc.connect(d); else pendingDevice = d;
                 } else {
+                    DebugLog.log("usb", "разрешение на USB отклонено");
                     dash.setLink(LinkState.ERROR, "Доступ к USB не разрешён — Меню → Переподключить");
                 }
+            } else if (ACTION_KLINE_PERMISSION.equals(a)) {
+                if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && d != null) {
+                    startKlineTest(d);
+                } else {
+                    toast("Доступ к KKL (CH340) не разрешён");
+                }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(a)) {
+                DebugLog.log("usb", "событие подключения кабеля");
                 permissionAsked = false;
                 connectIfPossible();
             }
@@ -396,7 +412,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
     }
 
     private static final int M_RAW = 1, M_DEMO = 2, M_RECONNECT = 3, M_AUTOLOG = 4, M_REFILL = 5,
-            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10, M_MAP = 11, M_NIGHT = 12, M_RECORDS = 13;
+            M_RESET_TRIP = 6, M_SETTINGS = 7, M_GPS = 8, M_QUIT = 9, M_ABOUT = 10, M_MAP = 11,
+            M_NIGHT = 12, M_RECORDS = 13, M_AUTOSTART = 14, M_DEBUG = 15, M_OPEN_ON_BOOT = 16,
+            M_KLINE = 17;
 
     private void showMenu() {
         final boolean demo = svc != null && svc.isDemo();
@@ -405,6 +423,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         addItem(ids, names, M_RAW, check(rawMode) + "Байты кадра");
         addItem(ids, names, M_DEMO, check(demo) + "Демо-режим");
         addItem(ids, names, M_AUTOLOG, check(prefs.autoLog()) + "Автозапись при подключении");
+        addItem(ids, names, M_AUTOSTART, check(prefs.autoStart()) + "Автозапуск при включении магнитолы");
+        addItem(ids, names, M_OPEN_ON_BOOT, check(prefs.autoStartUi()) + "Открывать окно при автозапуске");
         addItem(ids, names, M_SETTINGS, "Настройки предупреждений…");
         addItem(ids, names, M_REFILL, "Заправка и уровень газа…");
         addItem(ids, names, M_RESET_TRIP, "Сбросить статистику поездки");
@@ -413,6 +433,8 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         if (!hasLocation()) addItem(ids, names, M_GPS, "Разрешить GPS (пробег)");
         addItem(ids, names, M_MAP, "Перечитать карту K из блока");
         addItem(ids, names, M_RECONNECT, "Переподключить");
+        addItem(ids, names, M_DEBUG, check(prefs.debug()) + "Отладочный лог");
+        addItem(ids, names, M_KLINE, "Проверка K-line ЭБУ (KKL)");
         addItem(ids, names, M_ABOUT, "О программе");
         addItem(ids, names, M_QUIT, "Выход");
         new AlertDialog.Builder(this)
@@ -463,9 +485,30 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                 prefs.setAutoLog(!prefs.autoLog());
                 toast(prefs.autoLog() ? "Запись будет включаться сама при подключении кабеля" : "Автозапись выключена");
                 break;
+            case M_AUTOSTART:
+                prefs.setAutoStart(!prefs.autoStart());
+                DebugLog.log("ui", "автозапуск " + (prefs.autoStart() ? "включён" : "выключен"));
+                toast(prefs.autoStart()
+                        ? "При включении магнитолы приложение запустится само"
+                        : "Автозапуск выключен");
+                break;
+            case M_OPEN_ON_BOOT:
+                prefs.setAutoStartUi(!prefs.autoStartUi());
+                DebugLog.log("ui", "открывать окно при автозапуске " + (prefs.autoStartUi() ? "вкл" : "выкл"));
+                toast(prefs.autoStartUi()
+                        ? "При включении магнитолы откроется окно приложения"
+                        : "Тихий старт: служба и мини-панель, без окна");
+                break;
+            case M_DEBUG:
+                toggleDebug();
+                break;
+            case M_KLINE:
+                toggleKlineTest();
+                break;
             case M_SETTINGS: settingsDialog(); break;
             case M_REFILL: refillDialog(); break;
             case M_RESET_TRIP:
+                DebugLog.log("ui", "сброс статистики поездки");
                 if (svc != null) { svc.stats.resetTrip(); svc.cells.reset(); svc.eco.reset(); statsView.invalidate(); mapView.invalidate(); }
                 break;
             case M_GPS: requestLocation(); break;
@@ -593,11 +636,26 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                     @Override
                     public void onClick(DialogInterface d, int w) {
                         if (svc == null) return;
+                        double gasBefore = svc.stats.gasLeft();
+                        double kBefore = svc.stats.k;
+                        double tankBefore = svc.stats.tankLiters;
                         float v = parseF(vol.getText().toString(), 0);
-                        if (v > 0 && Math.abs(v - svc.stats.tankLiters) > 0.01) svc.stats.setTank(Math.min(300f, v));
+                        if (v > 0 && Math.abs(v - tankBefore) > 0.01) {
+                            svc.stats.setTank(Math.min(300f, v));
+                            DebugLog.log("refill", String.format(Locale.US,
+                                    "объём баллона: %.1f → %.1f л", tankBefore, svc.stats.tankLiters));
+                        }
                         float l = parseF(lit.getText().toString(), 0);
-                        if (l > 0) toast(svc.stats.onRefill(l, full.isChecked()));
-                        else if (v > 0) toast(String.format(Locale.getDefault(), "Объём баллона: %.0f л", svc.stats.tankLiters));
+                        if (l > 0) {
+                            String r = svc.stats.onRefill(l, full.isChecked());
+                            DebugLog.log("refill", String.format(Locale.US,
+                                    "заправка: залито %.2f л (%s); газ %s → %s л; k %s → %s; объём %.1f л; %s",
+                                    l, full.isChecked() ? "до полного" : "доливка",
+                                    fmtLiters(gasBefore), fmtLiters(svc.stats.gasLeft()),
+                                    fmtK(kBefore), fmtK(svc.stats.k),
+                                    svc.stats.tankLiters, r));
+                            toast(r);
+                        } else if (v > 0) toast(String.format(Locale.getDefault(), "Объём баллона: %.0f л", svc.stats.tankLiters));
                         statsView.invalidate();
                         dash.invalidate();
                     }
@@ -623,6 +681,16 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         try { return Float.parseFloat(s.trim().replace(',', '.')); } catch (Exception e) { return def; }
     }
 
+    /** Литры для лога заправки: «—», если уровень ещё не привязан. */
+    private static String fmtLiters(double v) {
+        return Double.isNaN(v) ? "—" : String.format(Locale.US, "%.1f", v);
+    }
+
+    /** Коэффициент калибровки для лога: «—», если ещё не откалиброван. */
+    private static String fmtK(double v) {
+        return v > 0 ? String.format(Locale.US, "%.6f", v) : "—";
+    }
+
     // ---------- GPS ----------
 
     private boolean hasLocation() {
@@ -638,6 +706,7 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     private void requestLocation() {
         if (Build.VERSION.SDK_INT >= 23 && !hasLocation()) {
+            DebugLog.log("gps", "запрос разрешения на геолокацию");
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
         }
@@ -645,6 +714,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        if (code == REQ_LOCATION) {
+            DebugLog.log("gps", hasLocation() ? "разрешение на геолокацию выдано" : "разрешение на геолокацию отклонено");
+        }
         if (code == REQ_LOCATION && hasLocation() && svc != null) svc.startGps();
         updateGpsInfo();
     }
@@ -781,6 +853,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                         prefs.setNightMode(sel < 0 ? Prefs.NIGHT_AUTO : sel);
                         prefs.setNightBrightness(Math.max(2, br.getProgress()) / 100f);
                         prefs.setNightDim(dim.getProgress() / 100f);
+                        DebugLog.log("ui", "ночной режим: " + prefs.nightMode() + ", яркость "
+                                + Math.round(prefs.nightBrightness() * 100) + " %, затемнение "
+                                + Math.round(prefs.nightDim() * 100) + " %");
                         applyNight();
                     }
                 })
@@ -843,7 +918,9 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
                 .setMessage(e.name)
                 .setPositiveButton("Удалить", new DialogInterface.OnClickListener() {
                     @Override public void onClick(DialogInterface d, int w) {
-                        toast(Recordings.delete(MainActivity.this, e) ? "Удалено" : "Не удалось удалить");
+                        boolean ok = Recordings.delete(MainActivity.this, e);
+                        DebugLog.log("records", "удаление " + e.name + ": " + (ok ? "ок" : "ошибка"));
+                        toast(ok ? "Удалено" : "Не удалось удалить");
                         recordsDialog();
                     }
                 })
@@ -855,7 +932,114 @@ public final class MainActivity extends Activity implements MonitorService.Ui {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
+    private void toggleDebug() {
+        boolean on = !prefs.debug();
+        prefs.setDebug(on);
+        if (on) {
+            DebugLog.start(this);
+            DebugLog.log("ui", "отладочный лог включён");
+            String path = DebugLog.where();
+            toast(path == null ? "Не удалось включить отладочный лог" : "Отладочный лог: " + path);
+        } else {
+            DebugLog.log("ui", "отладочный лог выключен");
+            DebugLog.stop();
+            toast("Отладочный лог выключен");
+        }
+    }
+
+    // ---------- проверка K-line (KKL на CH340) ----------
+
+    private UsbDevice findCh340() {
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (Ch340.isSupported(d)) return d;
+        }
+        return null;
+    }
+
+    private void toggleKlineTest() {
+        if (klineTest != null) {
+            stopKlineTest("Проверка K-line остановлена");
+            return;
+        }
+        UsbDevice d = findCh340();
+        if (d == null) {
+            toast("KKL на CH340 не найден");
+            return;
+        }
+        if (usb.hasPermission(d)) {
+            startKlineTest(d);
+        } else {
+            Intent pi = new Intent(ACTION_KLINE_PERMISSION);
+            pi.setPackage(getPackageName());
+            int flags = Build.VERSION.SDK_INT >= 31 ? 0x02000000 : 0;
+            usb.requestPermission(d, PendingIntent.getBroadcast(this, 1, pi, flags));
+            toast("Разрешите доступ к KKL (CH340)");
+        }
+    }
+
+    private void startKlineTest(UsbDevice d) {
+        stopKlineTest(null);
+        klineTest = new KLineLink(usb, d, new KLineLink.Listener() {
+            private boolean first = true;
+
+            @Override
+            public void onState(int state, String text) {
+                DebugLog.log("kline", text);
+            }
+
+            @Override
+            public void onBlock(EcuBlock b, byte[] raw) {
+                final String s = String.format(Locale.US,
+                        "K-line: %.0f об/мин, MAP %.2f бар, впрыск %.2f мс, УОЗ %.1f°, "
+                                + "катушка %.2f мс, воздух %.1f кг/ч, ОЖ код %d",
+                        b.rpm, b.mapBar, b.injectionMs, b.uoz[0], b.coilMs, b.mafKgH, b.coolantRaw);
+                DebugLog.log("kline", s);
+                DebugLog.log("kline", "raw: " + hex(raw));
+                if (first) {
+                    first = false;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            toast(s);
+                        }
+                    });
+                }
+            }
+        });
+        klineTest.start();
+        toast("Проверка K-line запущена");
+        klineStop = new Runnable() {
+            @Override
+            public void run() {
+                stopKlineTest("Проверка K-line завершена");
+            }
+        };
+        klineTick.postDelayed(klineStop, 30000);
+    }
+
+    private void stopKlineTest(String msg) {
+        if (klineStop != null) {
+            klineTick.removeCallbacks(klineStop);
+            klineStop = null;
+        }
+        if (klineTest != null) {
+            klineTest.shutdown();
+            klineTest = null;
+        }
+        if (msg != null) toast(msg);
+    }
+
+    private static String hex(byte[] data) {
+        StringBuilder sb = new StringBuilder(data.length * 3);
+        for (byte b : data) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(String.format("%02X", b & 0xFF));
+        }
+        return sb.toString();
+    }
+
     private void toast(String s) {
+        DebugLog.log("ui", s);
         Toast.makeText(this, s, Toast.LENGTH_LONG).show();
     }
 }
