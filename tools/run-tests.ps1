@@ -1,12 +1,5 @@
-﻿# Юнит-тесты на Windows без Gradle и Android SDK (нужен JDK в PATH).
-#
-# Скрипт собирает только чистую логику (протокол, карта, предупреждения, статистика,
-# эко-индикатор, формат записи) и гоняет JUnit. APK не собирается, Android SDK не нужен.
-#
-# Почему не `gradlew test`: на Windows с кириллическим именем профиля Gradle пишет
-# classpath во временный файл в CP1251, путь портится и тестовый процесс не стартует
-# («Could not find or load main class ...GradleWorkerMain»). В Android Studio те же
-# тесты можно запустить правой кнопкой по app/src/test, если эта проблема не мешает.
+# Unit tests on Windows without Gradle / Android SDK (JDK must be in PATH).
+# Compiles only the pure-Java logic and runs JUnit. No APK is built.
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -16,7 +9,7 @@ $out = Join-Path $root 'app\build\tmp\junit-direct'
 
 foreach ($tool in 'javac', 'java') {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "$tool не найден в PATH. Установите JDK (в Android Studio: File → Project Structure → SDK)."
+        throw "$tool not found in PATH. Install a JDK (Android Studio: File - Project Structure - SDK)."
     }
 }
 
@@ -26,7 +19,7 @@ function Find-Jar([string]$pattern) {
         Where-Object { $_.Name -notmatch 'sources|javadoc' } |
         Select-Object -First 1
     if (-not $found) {
-        throw "Не найден $pattern в кэше Gradle. Один раз соберите проект в Android Studio (или запустите тесты оттуда), чтобы JUnit скачался."
+        throw "Not found $pattern in the Gradle cache. Build the project once in Android Studio."
     }
     return $found.FullName
 }
@@ -43,13 +36,16 @@ $sources = @(
     (Join-Path $main 'KMap.java'),
     (Join-Path $main 'Stats.java'),
     (Join-Path $main 'Eco.java'),
-    (Join-Path $main 'CsvFormat.java')
+    (Join-Path $main 'CsvFormat.java'),
+    (Join-Path $main 'EcuBlock.java'),
+    (Join-Path $main 'Kwp2000.java'),
+    (Join-Path $main 'Ch340Baud.java')
 )
 Get-ChildItem $test -Filter '*.java' | ForEach-Object { $sources += $_.FullName }
 
-Write-Host "Компиляция $($sources.Count) файлов…"
+Write-Host "Compiling $($sources.Count) files..."
 & javac -nowarn -encoding UTF-8 -cp "$junit;$hamcrest" -d $out $sources
-if ($LASTEXITCODE -ne 0) { throw 'Ошибка компиляции' }
+if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
 
 Copy-Item (Join-Path $root 'app\src\test\resources\vectors.txt') $out -Force
 
@@ -59,7 +55,10 @@ $classes = @(
     'ru.gbo.aebmonitor.KMapTest',
     'ru.gbo.aebmonitor.StatsTest',
     'ru.gbo.aebmonitor.EcoTest',
-    'ru.gbo.aebmonitor.CsvFormatTest'
+    'ru.gbo.aebmonitor.CsvFormatTest',
+    'ru.gbo.aebmonitor.EcuBlockTest',
+    'ru.gbo.aebmonitor.Kwp2000Test',
+    'ru.gbo.aebmonitor.Ch340BaudTest'
 )
 & java -cp "$out;$junit;$hamcrest" org.junit.runner.JUnitCore @classes
 $code = $LASTEXITCODE
